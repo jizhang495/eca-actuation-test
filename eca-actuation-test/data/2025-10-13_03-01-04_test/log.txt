@@ -1,0 +1,6 @@
+[2025-10-13 03:01:04.364] Measurement started
+[2025-10-13 03:01:04.925] Camera recording started
+[2025-10-13 03:01:04.928] Voltage set to 0.0V
+[2025-10-13 03:01:04.929] Relay CH1 set to open
+[2025-10-13 03:01:05.651] Camera recording stopped
+[2025-10-13 03:01:05.678] Measurement stopped

@@ -1,0 +1,11 @@
+{
+  "test_name": "test",
+  "dmm1_visa_id": null,
+  "dmm2_visa_id": null,
+  "power_supply_visa_id": null,
+  "relay_port": null,
+  "voltage_stages": [],
+  "relay_ch1_stages": [],
+  "relay_ch2_stages": [],
+  "sampling_rate_hz": 10.0
+}

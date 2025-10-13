@@ -1,11 +1,66 @@
-.venv/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 venv/
 env/
+ENV/
+.venv
 
-__pycache__/
-**/__pycache__/
-*.py[cod]
+# Data files
+data/*
+!data/.gitkeep
 
-.ruff_cache/
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-labview/IT64001/
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Camera executables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env*.local
+
+# Environment
+.env
+.env.local
+.env.production
+
+# uv
+.uv/
+uv.lock

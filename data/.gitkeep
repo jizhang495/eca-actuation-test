@@ -1,0 +1,7 @@
+# This directory stores measurement session data
+# Each session creates a timestamped subdirectory with:
+# - readings.csv (DMM voltage readings)
+# - config.json (measurement configuration)
+# - log.txt (session log)
+# - video.mp4 (camera recording, transferred from camera SD card)
+
