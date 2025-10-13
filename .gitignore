@@ -64,3 +64,7 @@ frontend/.env*.local
 # uv
 .uv/
 uv.lock
+
+
+docs/IT6412
+labview/IT64001/
