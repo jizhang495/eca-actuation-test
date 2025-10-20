@@ -49,6 +49,9 @@ Thumbs.db
 *.so
 *.dylib
 
+# Node.js
+node_modules/
+
 # Frontend
 frontend/node_modules/
 frontend/.next/

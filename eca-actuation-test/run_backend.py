@@ -7,6 +7,7 @@ Usage:
 """
 
 import uvicorn
+from pathlib import Path
 import logging
 
 logging.basicConfig(
@@ -27,11 +28,23 @@ if __name__ == "__main__":
     print("=" * 70)
     print()
 
+    # Restrict the reload watcher to the backend directory and
+    # exclude virtualenv/node/build dirs to avoid noisy reloads on Windows.
+    backend_dir = Path(__file__).parent
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
         port=8000,
         reload=True,  # Enable auto-reload during development
-        log_level="info"
+        reload_dirs=[str(backend_dir)],
+        reload_excludes=[
+            ".venv/*",
+            "frontend/*",
+            "node_modules/*",
+            "**/__pycache__/*",
+            "**/*.pyc",
+            "**/.git/*",
+        ],
+        log_level="info",
     )
 
