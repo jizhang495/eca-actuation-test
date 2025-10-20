@@ -128,6 +128,20 @@ The frontend will start on `http://localhost:3000`
 
 Navigate to `http://localhost:3000`
 
+### 5. Stop Services
+
+When finished, stop all services:
+
+**Windows:**
+```powershell
+.\stop.ps1
+```
+
+**Linux/Mac:**
+```bash
+./stop.sh
+```
+
 ## Usage
 
 ### Basic Workflow

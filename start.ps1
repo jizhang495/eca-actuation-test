@@ -75,7 +75,7 @@ Start-Sleep -Seconds 2
 # Start frontend
 Write-Host "Starting frontend..." -ForegroundColor Yellow
 Set-Location frontend
-$frontend = Start-Process npm -ArgumentList "run","dev" -PassThru -WindowStyle Hidden
+$frontend = Start-Process powershell -ArgumentList "-Command", "npm run dev" -PassThru -WindowStyle Hidden
 Write-Host "Success: Frontend started (PID: $($frontend.Id))" -ForegroundColor Green
 Set-Location ..
 

@@ -286,23 +286,43 @@ Try endpoints directly in the browser!
 
 ## Stopping Services
 
-### Automated Stop (if using start script)
+### Automated Stop (Recommended)
 
 **Windows:**
 ```powershell
-Stop-Process -Name python,node
+.\stop.ps1
 ```
 
 **Linux/Mac:**
 ```bash
-pkill -f "python run_backend.py"
-pkill -f "python camera_service.py"
+chmod +x stop.sh
+./stop.sh
+```
+
+These scripts will:
+- Stop all Python processes (backend, camera service)
+- Stop all Node.js processes (frontend)
+- Verify all ports are free
+- Show status of each service
+
+### Manual Stop Commands
+
+**Windows:**
+```powershell
+taskkill /IM python.exe /F
+taskkill /IM node.exe /F
+```
+
+**Linux/Mac:**
+```bash
+pkill -f "python.*run_backend.py"
+pkill -f "python.*camera_service.py"
 pkill -f "npm run dev"
 ```
 
-### Manual Stop
+### Manual Stop (Terminal Method)
 
-Press `Ctrl+C` in each terminal window.
+Press `Ctrl+C` in each terminal window where services are running.
 
 ---
 

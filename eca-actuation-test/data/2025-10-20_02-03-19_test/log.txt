@@ -1,0 +1,4 @@
+[2025-10-20 02:03:19.942] Measurement started
+[2025-10-20 02:03:20.465] Camera recording started
+[2025-10-20 02:03:33.251] Camera recording stopped
+[2025-10-20 02:03:33.362] Measurement stopped
