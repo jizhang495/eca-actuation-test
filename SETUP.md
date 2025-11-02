@@ -11,7 +11,7 @@ Detailed setup instructions for the ECA Testing Webapp.
 - 100MB free disk space
 
 ### Software
-- Python 3.11 or higher
+- [uv](https://github.com/astral-sh/uv) package manager
 - Node.js 18 or higher
 - VISA drivers (NI-VISA recommended)
 - USB drivers for instruments
@@ -19,8 +19,6 @@ Detailed setup instructions for the ECA Testing Webapp.
 ## Step-by-Step Setup
 
 ### 1. Install Python Dependencies
-
-#### Option A: Using uv (Recommended)
 
 Install uv package manager:
 ```powershell
@@ -37,13 +35,6 @@ Then install project dependencies:
 ```bash
 cd eca-actuation-test
 uv sync
-```
-
-#### Option B: Using pip
-
-```bash
-cd eca-actuation-test
-pip install -e .
 ```
 
 ### 2. Install VISA Drivers
@@ -154,13 +145,13 @@ Copy EDSDK DLLs to camera directory or add to PATH.
 #### Terminal 1: Backend
 ```bash
 cd eca-actuation-test
-python run_backend.py
+uv run run_backend.py
 ```
 
 #### Terminal 2: Camera Service (Optional)
 ```bash
 cd camera
-python camera_service.py
+uv run camera_service.py
 ```
 
 #### Terminal 3: Frontend
@@ -187,7 +178,8 @@ The system can run in development mode without physical instruments:
 ### "No module named 'pyvisa'"
 
 ```bash
-pip install pyvisa pyvisa-py
+cd eca-actuation-test
+uv sync
 ```
 
 ### "VISA resource not found"
@@ -206,6 +198,12 @@ This is normal if camera is not compiled/connected. App works in mock mode.
 Kill existing process or change port in `run_backend.py`:
 ```python
 uvicorn.run("app:app", host="0.0.0.0", port=8001)
+```
+
+Or run with different port:
+```bash
+cd eca-actuation-test
+uv run python -c "import uvicorn; uvicorn.run('app:app', host='0.0.0.0', port=8001)"
 ```
 
 ### Frontend build errors

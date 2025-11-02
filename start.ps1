@@ -5,9 +5,9 @@ Write-Host "  ECA Testing Webapp - Quick Start" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check if Python is installed
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Host "Error: Python is not installed. Please install Python 3.11 or higher." -ForegroundColor Red
+# Check if uv is installed
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    Write-Host "Error: uv is not installed. Please install uv (https://github.com/astral-sh/uv)." -ForegroundColor Red
     exit 1
 }
 
@@ -17,22 +17,17 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-$pythonVersion = python --version
+$uvVersion = uv --version
 $nodeVersion = node --version
-Write-Host "Success: Python found: $pythonVersion" -ForegroundColor Green
+Write-Host "Success: uv found: $uvVersion" -ForegroundColor Green
 Write-Host "Success: Node.js found: $nodeVersion" -ForegroundColor Green
 Write-Host ""
 
 # Install Python dependencies
 Write-Host "Installing Python dependencies..." -ForegroundColor Yellow
 Set-Location eca-actuation-test
-if (Get-Command uv -ErrorAction SilentlyContinue) {
-    Write-Host "Using uv package manager..."
-    uv sync
-} else {
-    Write-Host "Using pip..."
-    pip install -e ..
-}
+Write-Host "Using uv package manager..."
+uv sync
 Set-Location ..
 
 # Install Frontend dependencies
@@ -55,7 +50,7 @@ Write-Host ""
 # Start backend
 Write-Host "Starting backend..." -ForegroundColor Yellow
 Set-Location eca-actuation-test
-$backend = Start-Process python -ArgumentList "run_backend.py" -PassThru -WindowStyle Hidden
+$backend = Start-Process uv -ArgumentList "run", "run_backend.py" -PassThru -WindowStyle Hidden
 Write-Host "Success: Backend started (PID: $($backend.Id))" -ForegroundColor Green
 Set-Location ..
 
@@ -65,7 +60,7 @@ Start-Sleep -Seconds 3
 # Start camera service
 Write-Host "Starting camera service..." -ForegroundColor Yellow
 Set-Location camera
-$camera = Start-Process python -ArgumentList "camera_service.py" -PassThru -WindowStyle Hidden
+$camera = Start-Process uv -ArgumentList "run", "camera_service.py" -PassThru -WindowStyle Hidden
 Write-Host "Success: Camera service started (PID: $($camera.Id))" -ForegroundColor Green
 Set-Location ..
 

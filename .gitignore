@@ -28,6 +28,7 @@ ENV/
 # Data files
 data/*
 !data/.gitkeep
+eca-actuation-test/data/
 
 # IDEs
 .vscode/

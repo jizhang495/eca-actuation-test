@@ -396,7 +396,7 @@ class MeasurementController:
         """
         elapsed = None
         if self.is_measuring and self.start_time:
-            elapsed = time.time() - self.start_time
+            elapsed = round(time.time() - self.start_time, 1)
 
         return {
             "is_measuring": self.is_measuring,
@@ -457,7 +457,7 @@ class MeasurementController:
         """
         elapsed = None
         if self.start_time:
-            elapsed = time.time() - self.start_time
+            elapsed = round(time.time() - self.start_time, 1)
 
         return {
             "time": elapsed,

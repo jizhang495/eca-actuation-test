@@ -6,9 +6,9 @@ echo "  ECA Testing Webapp - Quick Start"
 echo "================================================"
 echo ""
 
-# Check if Python is installed
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Python 3 is not installed. Please install Python 3.11 or higher."
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "❌ uv is not installed. Please install uv (https://github.com/astral-sh/uv)."
     exit 1
 fi
 
@@ -18,20 +18,15 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
-echo "✓ Python 3 found: $(python3 --version)"
+echo "✓ uv found: $(uv --version)"
 echo "✓ Node.js found: $(node --version)"
 echo ""
 
 # Install Python dependencies
 echo "📦 Installing Python dependencies..."
 cd eca-actuation-test
-if command -v uv &> /dev/null; then
-    echo "Using uv package manager..."
-    uv sync
-else
-    echo "Using pip..."
-    pip install -e ..
-fi
+echo "Using uv package manager..."
+uv sync
 cd ..
 
 # Install Frontend dependencies
@@ -55,7 +50,7 @@ echo ""
 
 # Start backend
 cd eca-actuation-test
-python run_backend.py > ../backend.log 2>&1 &
+uv run run_backend.py > ../backend.log 2>&1 &
 BACKEND_PID=$!
 echo "✓ Backend started (PID: $BACKEND_PID) - Logs: backend.log"
 cd ..
@@ -65,7 +60,7 @@ sleep 3
 
 # Start camera service (optional)
 cd camera
-python camera_service.py > ../camera.log 2>&1 &
+uv run camera_service.py > ../camera.log 2>&1 &
 CAMERA_PID=$!
 echo "✓ Camera service started (PID: $CAMERA_PID) - Logs: camera.log"
 cd ..

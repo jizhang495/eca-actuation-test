@@ -4,7 +4,7 @@ Get the ECA Testing Webapp running in 5 minutes!
 
 ## Prerequisites
 
-- Python 3.11+ installed
+- [uv](https://github.com/astral-sh/uv) package manager installed
 - Node.js 18+ installed
 - VISA drivers installed (optional for development mode)
 
@@ -41,7 +41,7 @@ The script will:
 #### Backend
 ```bash
 cd eca-actuation-test
-pip install -e .
+uv sync
 ```
 
 #### Frontend
@@ -57,13 +57,13 @@ Open 3 separate terminals:
 #### Terminal 1: Backend
 ```bash
 cd eca-actuation-test
-python run_backend.py
+uv run run_backend.py
 ```
 
 #### Terminal 2: Camera Service (optional)
 ```bash
 cd camera
-python camera_service.py
+uv run camera_service.py
 ```
 
 #### Terminal 3: Frontend
@@ -180,7 +180,7 @@ App will run in **mock mode** for development. To connect real instruments:
 
 4. **Restart backend**
    - Stop backend (Ctrl+C)
-   - Restart: `python run_backend.py`
+   - Restart: `uv run run_backend.py`
 
 ### WebSocket Connection Failed
 
@@ -213,7 +213,7 @@ Just need API access? Run only the backend:
 
 ```bash
 cd eca-actuation-test
-python run_backend.py
+uv run run_backend.py
 ```
 
 API will be available at `http://localhost:8000`

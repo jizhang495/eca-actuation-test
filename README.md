@@ -45,8 +45,7 @@ A unified web interface for controlling, monitoring, and recording experiments i
 ## Prerequisites
 
 ### Backend
-- Python 3.11 or higher
-- [uv](https://github.com/astral-sh/uv) package manager (or pip)
+- [uv](https://github.com/astral-sh/uv) package manager
 - VISA drivers (NI-VISA or compatible)
 - USB drivers for instruments
 
@@ -69,14 +68,12 @@ cd eca-actuation-test
 
 ### 2. Backend Setup
 
-Using uv (recommended):
+Using uv:
 
 ```bash
 # Install dependencies
+cd eca-actuation-test
 uv sync
-
-# Or using pip
-pip install -e .
 ```
 
 ### 3. Frontend Setup
@@ -97,7 +94,7 @@ See [camera/README.md](camera/README.md) for compilation instructions.
 ```bash
 # From project root
 cd eca-actuation-test
-python app.py
+uv run run_backend.py
 ```
 
 The backend will start on `http://localhost:8000`
@@ -108,7 +105,7 @@ In a separate terminal:
 
 ```bash
 cd camera
-python camera_service.py
+uv run camera_service.py
 ```
 
 The camera service will start on `http://localhost:8001`
