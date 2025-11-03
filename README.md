@@ -303,6 +303,15 @@ eca-actuation-test/
 
 ## Troubleshooting
 
+### Frontend Won't Start / Module Not Found
+
+If you see `Module not found: Can't resolve '@/lib/utils'`:
+
+1. The `frontend/src/lib/utils.ts` file is required for shadcn/ui components
+2. Ensure `npm install` completed successfully in the `frontend/` directory
+3. If the file is missing after cloning, it should be created during first build
+4. Verify the file exists: `frontend/src/lib/utils.ts`
+
 ### VISA Connection Issues
 
 If instruments are not detected:

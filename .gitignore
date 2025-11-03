@@ -12,6 +12,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!frontend/src/lib/
 parts/
 sdist/
 var/
@@ -52,6 +53,7 @@ Thumbs.db
 
 # Node.js
 node_modules/
+.npm-cache/
 
 # Frontend
 frontend/node_modules/

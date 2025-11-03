@@ -38,7 +38,12 @@ export function DMMGraph({
   const [xDomain, setXDomain] = useState<[number, number] | undefined>(undefined);
   const [yDomain, setYDomain] = useState<[number, number] | undefined>(undefined);
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number; xDomain: [number, number]; yDomain: [number, number] } | null>(null);
+  const [dragStart, setDragStart] = useState<{
+    x: number;
+    y: number;
+    xDomain: [number, number];
+    yDomain: [number, number];
+  } | null>(null);
   const [userHasInteracted, setUserHasInteracted] = useState(false);
 
   // Calculate domains for autoscaling
@@ -67,6 +72,39 @@ export function DMMGraph({
       voltage: [voltageMin - voltagePadding, voltageMax + voltagePadding] as [number, number],
     };
   }, [data]);
+
+  const clampDomain = useCallback(
+    (domain: [number, number], range: [number, number]): [number, number] => {
+      const [domainMin, domainMax] = domain;
+      const [rangeMin, rangeMax] = range;
+      const domainSpan = domainMax - domainMin;
+      const rangeSpan = rangeMax - rangeMin;
+
+      if (!isFinite(domainSpan) || domainSpan <= 0) {
+        return [rangeMin, rangeMax];
+      }
+
+      if (domainSpan >= rangeSpan) {
+        return [rangeMin, rangeMax];
+      }
+
+      let nextMin = domainMin;
+      let nextMax = domainMax;
+
+      if (nextMin < rangeMin) {
+        nextMin = rangeMin;
+        nextMax = rangeMin + domainSpan;
+      }
+
+      if (nextMax > rangeMax) {
+        nextMax = rangeMax;
+        nextMin = rangeMax - domainSpan;
+      }
+
+      return [nextMin, nextMax];
+    },
+    []
+  );
 
   // Auto-scale when data updates (if user hasn't manually interacted)
   React.useEffect(() => {
@@ -112,20 +150,9 @@ export function DMMGraph({
       dragStart.yDomain[1] + dy * yScale,
     ];
     
-    // Clamp to data bounds
-    const clampedXDomain: [number, number] = [
-      Math.max(dataRange.time[0], newXDomain[0]),
-      Math.min(dataRange.time[1], newXDomain[1]),
-    ];
-    
-    const clampedYDomain: [number, number] = [
-      Math.max(dataRange.voltage[0], newYDomain[0]),
-      Math.min(dataRange.voltage[1], newYDomain[1]),
-    ];
-    
-    setXDomain(clampedXDomain);
-    setYDomain(clampedYDomain);
-  }, [isDragging, dragStart, dataRange]);
+    setXDomain(clampDomain(newXDomain, dataRange.time));
+    setYDomain(clampDomain(newYDomain, dataRange.voltage));
+  }, [isDragging, dragStart, dataRange, clampDomain]);
 
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
@@ -140,6 +167,73 @@ export function DMMGraph({
       setYDomain(dataRange.voltage);
     }
   }, [dataRange]);
+
+  const handleWheel = useCallback(
+    (e: React.WheelEvent<HTMLDivElement>) => {
+      if (!dataRange || !xDomain || !yDomain) return;
+
+      e.preventDefault();
+      setUserHasInteracted(true);
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
+      const zoomFactor = Math.exp(e.deltaY * 0.002);
+
+      const timeSpan = xDomain[1] - xDomain[0];
+      const voltageSpan = yDomain[1] - yDomain[0];
+
+      const timeRange = dataRange.time[1] - dataRange.time[0];
+      const voltageRange = dataRange.voltage[1] - dataRange.voltage[0];
+
+      const minTimeSpan = Math.min(timeRange, Math.max(timeRange * 0.001, 0.001));
+      const minVoltageSpan = Math.min(voltageRange, Math.max(voltageRange * 0.001, 0.001));
+
+      const cursorX = e.clientX - rect.left;
+      const cursorY = e.clientY - rect.top;
+
+      const xRatio = cursorX / rect.width;
+      const yRatio = cursorY / rect.height;
+
+      const xCenter = xDomain[0] + timeSpan * xRatio;
+      const yCenter = yDomain[1] - voltageSpan * yRatio;
+
+      const leftPortion = xCenter - xDomain[0];
+      const rightPortion = xDomain[1] - xCenter;
+      const bottomPortion = yCenter - yDomain[0];
+      const topPortion = yDomain[1] - yCenter;
+
+      let nextXDomain: [number, number] = [
+        xCenter - leftPortion * zoomFactor,
+        xCenter + rightPortion * zoomFactor,
+      ];
+
+      let nextYDomain: [number, number] = [
+        yCenter - bottomPortion * zoomFactor,
+        yCenter + topPortion * zoomFactor,
+      ];
+
+      const nextTimeSpan = nextXDomain[1] - nextXDomain[0];
+      if (nextTimeSpan < minTimeSpan) {
+        nextXDomain = [
+          xCenter - minTimeSpan / 2,
+          xCenter + minTimeSpan / 2,
+        ];
+      }
+
+      const nextVoltageSpan = nextYDomain[1] - nextYDomain[0];
+      if (nextVoltageSpan < minVoltageSpan) {
+        nextYDomain = [
+          yCenter - minVoltageSpan / 2,
+          yCenter + minVoltageSpan / 2,
+        ];
+      }
+
+      setXDomain(clampDomain(nextXDomain, dataRange.time));
+      setYDomain(clampDomain(nextYDomain, dataRange.voltage));
+    },
+    [dataRange, xDomain, yDomain, clampDomain]
+  );
 
   return (
     <Card className="w-full">
@@ -178,6 +272,7 @@ export function DMMGraph({
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
           onDoubleClick={handleDoubleClick}
+          onWheel={handleWheel}
           style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
           className="select-none"
         >
@@ -219,4 +314,3 @@ export function DMMGraph({
     </Card>
   );
 }
-
