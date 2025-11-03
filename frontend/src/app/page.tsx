@@ -4,18 +4,12 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { DMMGraph } from "@/components/DMMGraph";
 import { VoltageStageConfigurator, VoltageStage } from "@/components/VoltageStageConfigurator";
 import { RelayStageConfigurator, RelayStage } from "@/components/RelayStageConfigurator";
 import { Play, Square, Video, VideoOff, AlertCircle } from "lucide-react";
+import { evaluateExpression } from "@/lib/expression";
 
 interface DMMReading {
   time: number;
@@ -172,13 +166,45 @@ export default function Home() {
 
   const handleStartMeasurement = async () => {
     try {
+      const normalizedVoltageStages: Array<{ start_time: number; end_time: number; voltage: number }> = [];
+
+      for (let i = 0; i < voltageStages.length; i++) {
+        const stage = voltageStages[i];
+        const expression = stage.voltageExpression ?? String(stage.voltage);
+        const evaluation = evaluateExpression(expression, { t: stage.start_time });
+
+        if (evaluation.error || evaluation.value === null) {
+          alert(`Power stage ${i + 1}: ${evaluation.error ?? "Invalid expression"}`);
+          return;
+        }
+
+        normalizedVoltageStages.push({
+          start_time: stage.start_time,
+          end_time: stage.end_time,
+          voltage: evaluation.value,
+        });
+      }
+
+      if (normalizedVoltageStages.length !== voltageStages.length) {
+        alert("Failed to normalize voltage stages.");
+        return;
+      }
+
+      setVoltageStages((prev) =>
+        prev.map((stage, index) => ({
+          ...stage,
+          voltage: normalizedVoltageStages[index]?.voltage ?? stage.voltage,
+          voltageExpressionError: undefined,
+        }))
+      );
+
       const config = {
         test_name: testName,
         dmm1_visa_id: dmm1Visa || null,
         dmm2_visa_id: dmm2Visa || null,
         power_supply_visa_id: powerSupplyVisa || null,
         relay_port: relayPort || null,
-        voltage_stages: voltageStages,
+        voltage_stages: normalizedVoltageStages,
         relay_ch1_stages: relayCh1Stages,
         relay_ch2_stages: relayCh2Stages,
         sampling_rate_hz: samplingRate,
@@ -316,92 +342,65 @@ export default function Home() {
 
           {/* Right Column - Controls */}
           <div className="space-y-6">
-            {/* Test Configuration */}
             <Card>
-              <CardHeader>
-                <CardTitle>Test Configuration</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="test-name">Test Name</Label>
-                  <Input
-                    id="test-name"
-                    value={testName}
-                    onChange={(e) => setTestName(e.target.value)}
-                    disabled={isMeasuring}
-                    placeholder="test"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="sampling-rate">Sampling Rate (Hz)</Label>
-                  <Input
-                    id="sampling-rate"
-                    type="number"
-                    value={samplingRate}
-                    onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
-                    disabled={isMeasuring}
-                    min={1}
-                    max={100}
-                  />
+              <CardContent className="pt-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor="test-name"
+                      className="text-xs uppercase tracking-wide text-muted-foreground"
+                    >
+                      Test Name
+                    </Label>
+                    <Input
+                      id="test-name"
+                      value={testName}
+                      onChange={(e) => setTestName(e.target.value)}
+                      disabled={isMeasuring}
+                      placeholder="test"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor="sampling-rate"
+                      className="text-xs uppercase tracking-wide text-muted-foreground"
+                    >
+                      Sampling Rate (Hz)
+                    </Label>
+                    <Input
+                      id="sampling-rate"
+                      type="number"
+                      value={samplingRate}
+                      onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
+                      disabled={isMeasuring}
+                      min={1}
+                      max={100}
+                      className="h-9"
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
 
-            {/* Power Supply Configuration */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Power Supply</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <Label htmlFor="power-supply-visa">VISA ID</Label>
-                  <Select
-                    value={powerSupplyVisa}
-                    onValueChange={setPowerSupplyVisa}
-                    disabled={isMeasuring}
-                  >
-                    <SelectTrigger id="power-supply-visa">
-                      <SelectValue placeholder="Select power supply" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {visaResources.map((visa) => (
-                        <SelectItem key={visa} value={visa}>
-                          {visa}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-            </Card>
+            <VoltageStageConfigurator
+              stages={voltageStages}
+              onStagesChange={setVoltageStages}
+              visaResources={visaResources}
+              selectedVisa={powerSupplyVisa}
+              onVisaChange={setPowerSupplyVisa}
+              disabled={isMeasuring}
+            />
 
-            {/* Relay Configuration */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Relay Board</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <Label htmlFor="relay-port">Serial Port</Label>
-                  <Select
-                    value={relayPort}
-                    onValueChange={setRelayPort}
-                    disabled={isMeasuring}
-                  >
-                    <SelectTrigger id="relay-port">
-                      <SelectValue placeholder="Select relay port" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {serialPorts.map((port) => (
-                        <SelectItem key={port} value={port}>
-                          {port}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-            </Card>
+            <RelayStageConfigurator
+              channel={1}
+              stages={relayCh1Stages}
+              onStagesChange={setRelayCh1Stages}
+              serialPorts={serialPorts}
+              selectedPort={relayPort}
+              onPortChange={setRelayPort}
+              disabled={isMeasuring}
+            />
 
             {/* Session Info */}
             {sessionId && (
@@ -416,28 +415,6 @@ export default function Home() {
             )}
           </div>
         </div>
-
-        {/* Voltage and Relay Stage Configurators */}
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <VoltageStageConfigurator
-            stages={voltageStages}
-            onStagesChange={setVoltageStages}
-            disabled={isMeasuring}
-          />
-          <RelayStageConfigurator
-            channel={1}
-            stages={relayCh1Stages}
-            onStagesChange={setRelayCh1Stages}
-            disabled={isMeasuring}
-          />
-          <RelayStageConfigurator
-            channel={2}
-            stages={relayCh2Stages}
-            onStagesChange={setRelayCh2Stages}
-            disabled={isMeasuring}
-          />
-        </div>
-
         {/* Info Banner */}
         {!cameraStatus.available && (
           <div className="mt-6">
@@ -455,4 +432,3 @@ export default function Home() {
     </div>
   );
 }
-

@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,9 @@ interface RelayStageConfiguratorProps {
   channel: number;
   stages: RelayStage[];
   onStagesChange: (stages: RelayStage[]) => void;
+  serialPorts: string[];
+  selectedPort: string;
+  onPortChange: (port: string) => void;
   disabled?: boolean;
 }
 
@@ -31,6 +34,9 @@ export function RelayStageConfigurator({
   channel,
   stages,
   onStagesChange,
+  serialPorts,
+  selectedPort,
+  onPortChange,
   disabled = false,
 }: RelayStageConfiguratorProps) {
   const addStage = () => {
@@ -47,7 +53,8 @@ export function RelayStageConfigurator({
   };
 
   const removeStage = (index: number) => {
-    onStagesChange(stages.filter((_, i) => i !== index));
+    const filtered = stages.filter((_, i) => i !== index);
+    onStagesChange(filtered);
   };
 
   const updateStage = (
@@ -55,86 +62,111 @@ export function RelayStageConfigurator({
     field: keyof RelayStage,
     value: number | "open" | "closed"
   ) => {
-    const newStages = [...stages];
-    newStages[index] = { ...newStages[index], [field]: value };
+    const newStages = stages.map((stage, i) =>
+      i === index ? { ...stage, [field]: value } : stage
+    );
+
     onStagesChange(newStages);
   };
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Relay Channel {channel}</CardTitle>
-        <CardDescription>Configure up to 10 stages (max 10)</CardDescription>
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>Relay</CardTitle>
+        </div>
+        <div className="flex w-full flex-col gap-1 sm:max-w-xs">
+          <Label htmlFor={`relay${channel}-port`} className="text-xs text-muted-foreground">
+            Serial Port
+          </Label>
+          <Select
+            value={selectedPort}
+            onValueChange={onPortChange}
+            disabled={disabled}
+          >
+            <SelectTrigger id={`relay${channel}-port`} className="h-9">
+              <SelectValue placeholder="Select relay port" />
+            </SelectTrigger>
+            <SelectContent>
+              {serialPorts.map((port) => (
+                <SelectItem key={port} value={port}>
+                  {port}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {stages.map((stage, index) => (
-          <div key={index} className="flex items-end gap-2">
-            <div className="flex-1 space-y-2">
-              <Label htmlFor={`relay${channel}-${index}-start`} className="text-xs">
-                Stage {index + 1}
-              </Label>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <Label
-                    htmlFor={`relay${channel}-${index}-start`}
-                    className="text-xs text-muted-foreground"
-                  >
-                    Start (s)
-                  </Label>
-                  <Input
-                    id={`relay${channel}-${index}-start`}
-                    type="number"
-                    step="0.1"
-                    value={stage.start_time}
-                    onChange={(e) =>
-                      updateStage(index, "start_time", parseFloat(e.target.value) || 0)
-                    }
-                    disabled={disabled}
+          <div key={index} className="flex items-end gap-3">
+            <span className="w-5 text-xs font-medium text-muted-foreground text-right">
+              {index + 1}
+            </span>
+            <div className="grid flex-1 grid-cols-3 gap-2">
+              <div className="flex flex-col gap-1">
+                <Label
+                  htmlFor={`relay${channel}-${index}-start`}
+                  className="text-xs text-muted-foreground"
+                >
+                  Start (s)
+                </Label>
+                <Input
+                  id={`relay${channel}-${index}-start`}
+                  type="number"
+                  step="0.1"
+                  value={stage.start_time}
+                  onChange={(e) =>
+                    updateStage(index, "start_time", parseFloat(e.target.value) || 0)
+                  }
+                  disabled={disabled}
+                  className="h-9"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label
+                  htmlFor={`relay${channel}-${index}-end`}
+                  className="text-xs text-muted-foreground"
+                >
+                  End (s)
+                </Label>
+                <Input
+                  id={`relay${channel}-${index}-end`}
+                  type="number"
+                  step="0.1"
+                  value={stage.end_time}
+                  onChange={(e) =>
+                    updateStage(index, "end_time", parseFloat(e.target.value) || 0)
+                  }
+                  disabled={disabled}
+                  className="h-9"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label
+                  htmlFor={`relay${channel}-${index}-state`}
+                  className="text-xs text-muted-foreground"
+                >
+                  State
+                </Label>
+                <Select
+                  value={stage.state}
+                  onValueChange={(value) =>
+                    updateStage(index, "state", value as "open" | "closed")
+                  }
+                  disabled={disabled}
+                >
+                  <SelectTrigger
+                    id={`relay${channel}-${index}-state`}
                     className="h-9"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor={`relay${channel}-${index}-end`}
-                    className="text-xs text-muted-foreground"
                   >
-                    End (s)
-                  </Label>
-                  <Input
-                    id={`relay${channel}-${index}-end`}
-                    type="number"
-                    step="0.1"
-                    value={stage.end_time}
-                    onChange={(e) =>
-                      updateStage(index, "end_time", parseFloat(e.target.value) || 0)
-                    }
-                    disabled={disabled}
-                    className="h-9"
-                  />
-                </div>
-                <div>
-                  <Label
-                    htmlFor={`relay${channel}-${index}-state`}
-                    className="text-xs text-muted-foreground"
-                  >
-                    State
-                  </Label>
-                  <Select
-                    value={stage.state}
-                    onValueChange={(value) =>
-                      updateStage(index, "state", value as "open" | "closed")
-                    }
-                    disabled={disabled}
-                  >
-                    <SelectTrigger id={`relay${channel}-${index}-state`} className="h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="open">Open</SelectItem>
-                      <SelectItem value="closed">Closed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <Button
@@ -162,4 +194,3 @@ export function RelayStageConfigurator({
     </Card>
   );
 }
-
