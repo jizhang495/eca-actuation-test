@@ -174,14 +174,14 @@ When finished, stop all services:
    - Click "Stop Measurement"
    - Camera stops recording
    - Data is saved to CSV
-   - Session folder created in `data/`
+   - Session folder created in `user-data/sessions/`
 
 ### Data Output
 
-Each measurement session creates a timestamped folder in `data/`:
+Each measurement session creates a timestamped folder in `user-data/sessions/` by default. Set `ECA_DATA_DIR` to store sessions elsewhere.
 
 ```
-data/
+user-data/sessions/
   └── 2025-10-13_14-30-15_test1/
       ├── readings.csv      # Time, DMM1, DMM2 voltages
       ├── config.json       # Test configuration
@@ -293,7 +293,8 @@ eca-actuation-test/
 │   │   └── lib/             # Utilities
 │   ├── package.json
 │   └── next.config.js
-├── data/                      # Measurement data (auto-created)
+├── user-data/                 # Local measurement data (gitignored)
+│   └── sessions/              # Measurement sessions (auto-created)
 ├── docs/                      # Documentation
 │   └── PRD.md                # Product Requirements Document
 ├── labview/                   # Legacy LabVIEW code

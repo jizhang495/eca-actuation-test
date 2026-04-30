@@ -26,7 +26,7 @@ class KeithleyDMM:
         """List all available VISA devices."""
         try:
             resources = self.rm.list_resources()
-            return [str(res) for res in resources]
+            return [str(res) for res in resources if str(res).upper().startswith("USB")]
         except Exception as e:
             logger.error(f"Failed to list VISA resources: {e}")
             return []
@@ -127,4 +127,3 @@ class KeithleyDMM:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.disconnect()
-

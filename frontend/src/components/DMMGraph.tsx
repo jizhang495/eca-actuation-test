@@ -236,19 +236,19 @@ export function DMMGraph({
   );
 
   return (
-    <Card className="w-full">
+    <Card className="min-w-0 w-full">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-lg">{title}</CardTitle>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
             <Label htmlFor={`visa-${title}`} className="text-sm whitespace-nowrap">
               VISA ID:
             </Label>
             <Select value={selectedVisa} onValueChange={onVisaChange}>
-              <SelectTrigger id={`visa-${title}`} className="w-[180px]">
+              <SelectTrigger id={`visa-${title}`} className="w-full sm:w-[240px]">
                 <SelectValue placeholder="Select instrument" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-w-[calc(100vw-2rem)]">
                 {visaResources.length === 0 ? (
                   <SelectItem value="none" disabled>
                     No instruments found

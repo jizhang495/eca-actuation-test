@@ -93,7 +93,7 @@ You can run a full measurement with mock instruments:
 Mock measurements produce real data files:
 
 ```
-data/2025-10-13_15-30-00_test/
+user-data/sessions/2025-10-13_15-30-00_test/
 ├── readings.csv      # Simulated DMM readings with noise
 ├── config.json       # Your test configuration
 └── log.txt          # Measurement log
@@ -301,4 +301,3 @@ For more information, see:
 - [README.md](../README.md) - Main documentation
 - [QUICKSTART.md](../QUICKSTART.md) - Getting started
 - [SETUP.md](../SETUP.md) - Hardware setup guide
-

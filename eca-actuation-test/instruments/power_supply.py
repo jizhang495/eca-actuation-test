@@ -26,7 +26,7 @@ class IT6412PowerSupply:
         """List all available VISA devices."""
         try:
             resources = self.rm.list_resources()
-            return [str(res) for res in resources]
+            return [str(res) for res in resources if str(res).upper().startswith("USB")]
         except Exception as e:
             logger.error(f"Failed to list VISA resources: {e}")
             return []
@@ -55,12 +55,12 @@ class IT6412PowerSupply:
             # Test connection
             idn = self.instrument.query("*IDN?")
             logger.info(f"Connected to Power Supply: {idn.strip()}")
+            self._is_connected = True
             
             # Initialize to safe state
             self.set_voltage(0.0)
             self.set_output_off()
             
-            self._is_connected = True
             return True
             
         except Exception as e:
@@ -213,4 +213,3 @@ class IT6412PowerSupply:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.disconnect()
-

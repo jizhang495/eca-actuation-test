@@ -112,7 +112,7 @@ The app coordinates multiple laboratory instruments—digital multimeters, DC po
 | **DC Power Supply Control**  | Add up to 10 time-voltage stages. Backend sends commands at scheduled intervals.      |
 | **Relay Control**            | Configure up to 10 open/close stages per channel.                                     |
 | **Camera Indicator**         | Shows live status (Idle / Recording).                                                 |
-| **Data Logging**             | CSV: `time, DMM1, DMM2` saved to `/data/`. Video stored in `/data/videos/`.           |
+| **Data Logging**             | CSV: `time, DMM1, DMM2` saved to `user-data/sessions/`. Video stored with session artifacts. |
 
 ---
 
@@ -127,7 +127,7 @@ The app coordinates multiple laboratory instruments—digital multimeters, DC po
 | **CSV Logger**           | Writes timestamped DMM readings.                                     | Pandas / native CSV writer      |
 | **API Layer**            | Exposes endpoints for external calls (start/stop, status, logs).     | FastAPI                         |
 | **WebSocket Layer**      | Real-time data push to frontend graphs.                              | FastAPI WebSocket               |
-| **Config & State Store** | Stores session config in JSON.                                       | `/data/configs/`                |
+| **Config & State Store** | Stores session config in JSON.                                       | `user-data/sessions/`           |
 
 ---
 
@@ -166,7 +166,7 @@ This allows the **Operation Agent** to:
 ## 7. Data & File Structure
 
 ```
-/data/
+user-data/sessions/
   /2025-10-12_15-30-02_test1/
     readings.csv          # time, DMM1, DMM2
     config.json           # voltage + relay stages
@@ -256,6 +256,4 @@ This allows the **Operation Agent** to:
 3. Cloud-based experiment logging and dashboard.
 4. Agentic API plugin for full automation (Operation Agent).
 5. Cross-session comparison and analytics (capacitance, hysteresis).
-
-
 

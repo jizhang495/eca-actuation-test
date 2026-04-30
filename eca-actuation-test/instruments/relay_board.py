@@ -37,7 +37,12 @@ class USB_RLY08C:
         """List all available serial ports."""
         try:
             ports = serial.tools.list_ports.comports()
-            return [port.device for port in ports]
+            usb_ports = [
+                port.device
+                for port in ports
+                if port.vid is not None or port.device.startswith(("/dev/ttyUSB", "/dev/ttyACM"))
+            ]
+            return usb_ports or [port.device for port in ports]
         except Exception as e:
             logger.error(f"Failed to list serial ports: {e}")
             return []
@@ -67,12 +72,12 @@ class USB_RLY08C:
                 write_timeout=1.0
             )
             time.sleep(0.1)  # Allow time for connection to stabilize
+            self._is_connected = True
             
             # Test connection by getting relay state
             state = self.get_relay_states()
             if state is not None:
                 logger.info(f"Connected to relay board on {self.port}")
-                self._is_connected = True
                 self._relay_states = state
                 return True
             else:
@@ -220,4 +225,3 @@ class USB_RLY08C:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.disconnect()
-

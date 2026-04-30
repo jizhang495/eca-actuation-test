@@ -27,6 +27,12 @@ chmod +x start.sh
 ./start.sh
 ```
 
+To start services without opening a browser:
+
+```bash
+OPEN_BROWSER=0 ./start.sh
+```
+
 The script will:
 1. Check dependencies
 2. Install Python packages
@@ -81,7 +87,7 @@ Navigate to: `http://localhost:3000`
 1. Click **"Start Measurement"** (will run in mock mode without instruments)
 2. Watch the graphs update in real-time
 3. Click **"Stop Measurement"** to save data
-4. Check `data/` folder for saved session
+4. Check `user-data/sessions/` folder for saved session
 
 ## Connect Real Instruments
 
@@ -120,10 +126,10 @@ Once the app is running, the dropdowns will show:
 
 ## Data Output
 
-Each measurement creates a folder in `data/`:
+Each measurement creates a folder in `user-data/sessions/` by default. Set `ECA_DATA_DIR` to store sessions elsewhere.
 
 ```
-data/2025-10-13_14-30-15_test1/
+user-data/sessions/2025-10-13_14-30-15_test1/
 ├── readings.csv    # DMM readings
 ├── config.json     # Test configuration
 └── log.txt        # Session log
@@ -247,7 +253,7 @@ Try endpoints directly in the browser!
 2. Click "Start Measurement"
 3. Wait 10 seconds
 4. Click "Stop Measurement"
-5. Check `data/` folder
+5. Check `user-data/sessions/` folder
 
 ### Test Voltage Stages
 
@@ -275,7 +281,7 @@ Try endpoints directly in the browser!
 4. Start measurement
 5. Let run for desired duration
 6. Stop measurement
-7. Review data in `data/` folder
+7. Review data in `user-data/sessions/` folder
 
 ## Performance Notes
 
@@ -329,4 +335,3 @@ Press `Ctrl+C` in each terminal window where services are running.
 **You're ready to start testing!** 🚀
 
 For detailed documentation, see [README.md](README.md)
-

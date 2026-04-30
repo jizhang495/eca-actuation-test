@@ -28,6 +28,7 @@ interface RelayStageConfiguratorProps {
   selectedPort: string;
   onPortChange: (port: string) => void;
   disabled?: boolean;
+  showPortSelector?: boolean;
 }
 
 export function RelayStageConfigurator({
@@ -38,6 +39,7 @@ export function RelayStageConfigurator({
   selectedPort,
   onPortChange,
   disabled = false,
+  showPortSelector = true,
 }: RelayStageConfiguratorProps) {
   const addStage = () => {
     if (stages.length >= 10) return;
@@ -73,29 +75,31 @@ export function RelayStageConfigurator({
     <Card>
       <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <CardTitle>Relay</CardTitle>
+          <CardTitle>Relay CH{channel}</CardTitle>
         </div>
-        <div className="flex w-full flex-col gap-1 sm:max-w-xs">
-          <Label htmlFor={`relay${channel}-port`} className="text-xs text-muted-foreground">
-            Serial Port
-          </Label>
-          <Select
-            value={selectedPort}
-            onValueChange={onPortChange}
-            disabled={disabled}
-          >
-            <SelectTrigger id={`relay${channel}-port`} className="h-9">
-              <SelectValue placeholder="Select relay port" />
-            </SelectTrigger>
-            <SelectContent>
-              {serialPorts.map((port) => (
-                <SelectItem key={port} value={port}>
-                  {port}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {showPortSelector && (
+          <div className="flex w-full flex-col gap-1 sm:max-w-xs">
+            <Label htmlFor={`relay${channel}-port`} className="text-xs text-muted-foreground">
+              Serial Port
+            </Label>
+            <Select
+              value={selectedPort}
+              onValueChange={onPortChange}
+              disabled={disabled}
+            >
+              <SelectTrigger id={`relay${channel}-port`} className="h-9">
+                <SelectValue placeholder="Select relay port" />
+              </SelectTrigger>
+              <SelectContent>
+                {serialPorts.map((port) => (
+                  <SelectItem key={port} value={port}>
+                    {port}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         {stages.map((stage, index) => (

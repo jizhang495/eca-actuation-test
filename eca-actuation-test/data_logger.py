@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,22 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DATA_DIR = REPO_ROOT / "user-data" / "sessions"
+
+
+def _resolve_data_dir(base_data_dir: str | Path | None = None) -> Path:
+    """Resolve session storage to an absolute, stable path."""
+    configured_dir = base_data_dir or os.getenv("ECA_DATA_DIR")
+    if not configured_dir:
+        return DEFAULT_DATA_DIR
+
+    data_dir = Path(configured_dir).expanduser()
+    if not data_dir.is_absolute():
+        data_dir = REPO_ROOT / data_dir
+
+    return data_dir
+
 
 class DataLogger:
     """
@@ -20,15 +37,17 @@ class DataLogger:
     Handles CSV logging of DMM readings and session metadata.
     """
 
-    def __init__(self, base_data_dir: str = "data"):
+    def __init__(self, base_data_dir: str | Path | None = None):
         """
         Initialize data logger.
 
         Args:
-            base_data_dir: Base directory for storing data
+            base_data_dir: Optional base directory for storing session data. Relative
+                paths resolve from the repository root. Defaults to ECA_DATA_DIR, or
+                user-data/sessions when the environment variable is not set.
         """
-        self.base_data_dir = Path(base_data_dir)
-        self.base_data_dir.mkdir(exist_ok=True)
+        self.base_data_dir = _resolve_data_dir(base_data_dir)
+        self.base_data_dir.mkdir(parents=True, exist_ok=True)
         
         self.current_session_dir: Optional[Path] = None
         self.csv_file: Optional[Path] = None
@@ -249,4 +268,3 @@ class DataLogger:
                 logger.error(f"Failed to read config: {e}")
 
         return info
-

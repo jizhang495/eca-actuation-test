@@ -228,7 +228,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/data
+      - ./user-data/sessions:/app/user-data/sessions
     devices:
       - /dev/ttyUSB0:/dev/ttyUSB0  # Relay board
   
@@ -302,13 +302,13 @@ For remote access:
 
 ### Data Backup
 
-Regularly backup `data/` directory:
+Regularly backup the session data directory. By default this is `user-data/sessions/`; set `ECA_DATA_DIR` to store sessions elsewhere.
 ```bash
 # Windows
-xcopy /E /I data backup\data_YYYYMMDD
+xcopy /E /I user-data\sessions backup\sessions_YYYYMMDD
 
 # Linux
-rsync -av data/ backup/data_YYYYMMDD/
+rsync -av user-data/sessions/ backup/sessions_YYYYMMDD/
 ```
 
 ### Configuration Backup
@@ -322,4 +322,3 @@ Save instrument configurations:
 ---
 
 **You're ready to start testing!**
-

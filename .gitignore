@@ -30,6 +30,11 @@ ENV/
 data/*
 !data/.gitkeep
 eca-actuation-test/data/
+user-data/*
+!user-data/.gitkeep
+!user-data/sessions/
+user-data/sessions/*
+!user-data/sessions/.gitkeep
 
 # IDEs
 .vscode/

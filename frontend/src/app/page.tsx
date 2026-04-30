@@ -266,64 +266,64 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold">ECA Testing Webapp</h1>
-              <p className="text-sm text-muted-foreground">
-                Electrochemical Actuator Testing and Control
-              </p>
-            </div>
-            <div className="flex items-center gap-4">
-              {/* Camera Status */}
-              <div className="flex items-center gap-2">
-                {cameraStatus.recording ? (
-                  <Video className="h-5 w-5 text-red-500 animate-pulse" />
-                ) : (
-                  <VideoOff className="h-5 w-5 text-muted-foreground" />
-                )}
-                <span className="text-sm">
-                  {cameraStatus.recording ? "Recording" : "Camera Idle"}
-                </span>
-              </div>
-
-              {/* Elapsed Time */}
-              {isMeasuring && (
-                <div className="text-sm font-mono">
-                  {elapsedTime.toFixed(1)} s
-                </div>
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <h1 className="whitespace-nowrap text-2xl font-bold leading-tight">
+              ECA Testing Webapp
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Electrochemical Actuator Testing and Control
+            </p>
+          </div>
+          <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-[auto_14rem_14rem] sm:items-center sm:justify-start xl:grid-cols-[auto_auto_auto_auto]">
+            {/* Camera Status */}
+            <div className="flex min-w-0 items-center gap-2 text-sm">
+              {cameraStatus.recording ? (
+                <Video className="h-5 w-5 text-red-500 animate-pulse" />
+              ) : (
+                <VideoOff className="h-5 w-5 text-muted-foreground" />
               )}
-
-              {/* Start/Stop Buttons */}
-              <Button
-                onClick={handleStartMeasurement}
-                disabled={isMeasuring}
-                size="lg"
-                className="gap-2"
-              >
-                <Play className="h-4 w-4" />
-                Start Measurement
-              </Button>
-              <Button
-                onClick={handleStopMeasurement}
-                disabled={!isMeasuring}
-                variant="destructive"
-                size="lg"
-                className="gap-2"
-              >
-                <Square className="h-4 w-4" />
-                Stop Measurement
-              </Button>
+              <span className="truncate">
+                {cameraStatus.recording ? "Recording" : "Camera Idle"}
+              </span>
             </div>
+
+            {/* Elapsed Time */}
+            {isMeasuring && (
+              <div className="text-sm font-mono sm:justify-self-end xl:justify-self-auto">
+                {elapsedTime.toFixed(1)} s
+              </div>
+            )}
+
+            {/* Start/Stop Buttons */}
+            <Button
+              onClick={handleStartMeasurement}
+              disabled={isMeasuring}
+              size="lg"
+              className="min-w-0 gap-2 px-4 sm:col-start-2 xl:col-start-auto"
+            >
+              <Play className="h-4 w-4 shrink-0" />
+              <span className="truncate">Start Measurement</span>
+            </Button>
+            <Button
+              onClick={handleStopMeasurement}
+              disabled={!isMeasuring}
+              variant="destructive"
+              size="lg"
+              className="min-w-0 gap-2 px-4"
+            >
+              <Square className="h-4 w-4 shrink-0" />
+              <span className="truncate">Stop Measurement</span>
+            </Button>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-6">
+      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left Column - DMM Graphs */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="min-w-0 lg:col-span-2 space-y-6">
             <DMMGraph
               title="DMM 1"
               data={dmm1Data}
@@ -400,6 +400,17 @@ export default function Home() {
               selectedPort={relayPort}
               onPortChange={setRelayPort}
               disabled={isMeasuring}
+            />
+
+            <RelayStageConfigurator
+              channel={2}
+              stages={relayCh2Stages}
+              onStagesChange={setRelayCh2Stages}
+              serialPorts={serialPorts}
+              selectedPort={relayPort}
+              onPortChange={setRelayPort}
+              disabled={isMeasuring}
+              showPortSelector={false}
             />
 
             {/* Session Info */}

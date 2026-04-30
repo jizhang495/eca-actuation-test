@@ -39,6 +39,8 @@ if __name__ == "__main__":
         reload_dirs=[str(backend_dir)],
         reload_excludes=[
             ".venv/*",
+            "data/*",
+            "data/**/*",
             "frontend/*",
             "node_modules/*",
             "**/__pycache__/*",
@@ -47,4 +49,3 @@ if __name__ == "__main__":
         ],
         log_level="info",
     )
-
