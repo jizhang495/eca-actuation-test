@@ -428,6 +428,31 @@ async def stop_record():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/release")
+async def release_camera():
+    """Close the EDSDK daemon session so file-transfer tools can access the camera."""
+    if camera_state["is_recording"]:
+        raise HTTPException(status_code=400, detail="Stop recording before releasing the camera")
+
+    try:
+        camera_daemon.stop()
+        camera_state["is_recording"] = False
+        camera_state["last_command_elapsed_us"] = None
+
+        if CAMERA_CONTROL_BIN.exists() or has_legacy_camera():
+            camera_state["is_available"] = True
+            camera_state["mock_mode"] = False
+
+        return {
+            "success": True,
+            "message": "Camera session released",
+            "is_recording": camera_state["is_recording"],
+        }
+    except Exception as e:
+        logger.error("Failed to release camera session: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""

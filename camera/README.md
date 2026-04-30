@@ -73,7 +73,23 @@ The service will automatically detect the executable and use it.
 - `POST /prepare` - Open the EDSDK session before measurement start
 - `POST /start_record` - Start recording
 - `POST /stop_record` - Stop recording
+- `POST /release` - Close the EDSDK camera session so file-transfer tools can access the SD card
 - `GET /health` - Health check
+
+## Downloading the Latest Recording
+
+Video files are saved on the camera SD card. After a measurement has stopped,
+download the newest movie into the newest session folder:
+
+```bash
+python scripts/download_latest_camera_recording.py
+```
+
+Use `--dry-run` to preview the selected camera file and destination without
+copying. The script writes a JSON sidecar next to the copied movie with the
+source URI, camera timestamp, and local path. If the camera is visible as an
+unmounted GVFS/gphoto volume, the script will mount it automatically before
+copying.
 
 ## Port
 
