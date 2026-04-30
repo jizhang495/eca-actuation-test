@@ -48,7 +48,7 @@ export function RelayStageConfigurator({
     const newStage: RelayStage = {
       start_time: lastStage ? lastStage.end_time : 0,
       end_time: lastStage ? lastStage.end_time + 5 : 5,
-      state: "open",
+      state: "closed",
     };
 
     onStagesChange([...stages, newStage]);

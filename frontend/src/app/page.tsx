@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DMMGraph } from "@/components/DMMGraph";
 import { VoltageStageConfigurator, VoltageStage } from "@/components/VoltageStageConfigurator";
 import { RelayStageConfigurator, RelayStage } from "@/components/RelayStageConfigurator";
-import { Play, Square, Video, VideoOff, AlertCircle } from "lucide-react";
+import { Loader2, Play, Square, Video, VideoOff, AlertCircle } from "lucide-react";
 import { evaluateExpression } from "@/lib/expression";
 
 interface DMMReading {
@@ -34,6 +34,7 @@ const MAX_DATA_POINTS = 500; // Limit data points shown on graph
 export default function Home() {
   // State for measurements
   const [isMeasuring, setIsMeasuring] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [cameraStatus, setCameraStatus] = useState({ recording: false, available: false });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
@@ -66,6 +67,8 @@ export default function Home() {
   // State for test configuration
   const [testName, setTestName] = useState("test");
   const [samplingRate, setSamplingRate] = useState(10);
+  const [recordCamera, setRecordCamera] = useState(false);
+  const [cameraReadyDelaySeconds, setCameraReadyDelaySeconds] = useState(1);
 
   // WebSocket reference
   const wsRef = useRef<WebSocket | null>(null);
@@ -290,6 +293,8 @@ export default function Home() {
         }))
       );
 
+      setIsStarting(true);
+
       const config = {
         test_name: testName,
         dmm1_visa_id: dmm1Visa || null,
@@ -300,6 +305,8 @@ export default function Home() {
         relay_ch1_stages: relayCh1Stages,
         relay_ch2_stages: relayCh2Stages,
         sampling_rate_hz: samplingRate,
+        record_camera: recordCamera,
+        camera_ready_delay_seconds: recordCamera ? cameraReadyDelaySeconds : 0,
       };
 
       const response = await fetch("/api/start_measurement", {
@@ -311,12 +318,14 @@ export default function Home() {
       if (!response.ok) {
         const error = await response.json();
         alert(`Failed to start measurement: ${error.detail}`);
+        setIsStarting(false);
         return;
       }
 
       const data = await response.json();
       setSessionId(data.session_id);
       setIsMeasuring(true);
+      setIsStarting(false);
 
       // Clear previous data
       setDmm1Data([]);
@@ -326,6 +335,7 @@ export default function Home() {
 
       console.log("Measurement started:", data);
     } catch (error) {
+      setIsStarting(false);
       console.error("Error starting measurement:", error);
       alert("Failed to start measurement. Check console for details.");
     }
@@ -391,16 +401,20 @@ export default function Home() {
             {/* Start/Stop Buttons */}
             <Button
               onClick={handleStartMeasurement}
-              disabled={isMeasuring}
+              disabled={isMeasuring || isStarting}
               size="lg"
               className="min-w-0 gap-2 px-4 sm:col-start-2 xl:col-start-auto"
             >
-              <Play className="h-4 w-4 shrink-0" />
-              <span className="truncate">Start Measurement</span>
+              {isStarting ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4 shrink-0" />
+              )}
+              <span className="truncate">{isStarting ? "Starting" : "Start Measurement"}</span>
             </Button>
             <Button
               onClick={handleStopMeasurement}
-              disabled={!isMeasuring}
+              disabled={!isMeasuring || isStarting}
               variant="destructive"
               size="lg"
               className="min-w-0 gap-2 px-4"
@@ -449,7 +463,7 @@ export default function Home() {
                       id="test-name"
                       value={testName}
                       onChange={(e) => setTestName(e.target.value)}
-                      disabled={isMeasuring}
+                      disabled={isMeasuring || isStarting}
                       placeholder="test"
                       className="h-9"
                     />
@@ -466,9 +480,52 @@ export default function Home() {
                       type="number"
                       value={samplingRate}
                       onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
-                      disabled={isMeasuring}
+                      disabled={isMeasuring || isStarting}
                       min={1}
                       max={300}
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_8rem] sm:items-center">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <input
+                      id="record-camera"
+                      type="checkbox"
+                      checked={recordCamera}
+                      onChange={(event) => setRecordCamera(event.target.checked)}
+                      disabled={isMeasuring || isStarting}
+                      className="h-4 w-4 rounded border-input"
+                    />
+                    <div className="min-w-0">
+                      <Label htmlFor="record-camera" className="text-sm font-medium">
+                        Record camera
+                      </Label>
+                      <div className="text-xs text-muted-foreground">
+                        {cameraStatus.available ? "Camera service ready" : "Camera unavailable"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label
+                      htmlFor="camera-ready-delay"
+                      className="text-xs uppercase tracking-wide text-muted-foreground"
+                    >
+                      Ready Delay (s)
+                    </Label>
+                    <Input
+                      id="camera-ready-delay"
+                      type="number"
+                      value={cameraReadyDelaySeconds}
+                      onChange={(event) =>
+                        setCameraReadyDelaySeconds(
+                          Math.max(0, parseFloat(event.target.value) || 0)
+                        )
+                      }
+                      disabled={!recordCamera || isMeasuring || isStarting}
+                      min={0}
+                      max={30}
+                      step={0.1}
                       className="h-9"
                     />
                   </div>
@@ -482,7 +539,7 @@ export default function Home() {
               visaResources={powerSupplyResources}
               selectedVisa={powerSupplyVisa}
               onVisaChange={setPowerSupplyVisa}
-              disabled={isMeasuring}
+              disabled={isMeasuring || isStarting}
             />
 
             <RelayStageConfigurator
@@ -492,7 +549,7 @@ export default function Home() {
               serialPorts={serialPorts}
               selectedPort={relayPort}
               onPortChange={setRelayPort}
-              disabled={isMeasuring}
+              disabled={isMeasuring || isStarting}
             />
 
             <RelayStageConfigurator
@@ -502,7 +559,7 @@ export default function Home() {
               serialPorts={serialPorts}
               selectedPort={relayPort}
               onPortChange={setRelayPort}
-              disabled={isMeasuring}
+              disabled={isMeasuring || isStarting}
               showPortSelector={false}
             />
 

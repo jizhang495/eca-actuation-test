@@ -94,6 +94,9 @@ class MeasurementController:
         
         self._measurement_task: Optional[asyncio.Task] = None
         self._voltage_stage_task: Optional[asyncio.Task] = None
+        self._camera_start_task: Optional[asyncio.Task] = None
+        self._camera_start_log_task: Optional[asyncio.Task] = None
+        self._record_camera_for_session = False
         self._relay_stage_tasks: list[asyncio.Task] = []
         self._relay_lock = asyncio.Lock()
 
@@ -121,23 +124,26 @@ class MeasurementController:
         
         # Save configuration
         self.data_logger.save_config(config.model_dump())
-        self.data_logger.append_log("Measurement started")
+        self.data_logger.append_log("Session created; preparing hardware")
 
-        # Connect instruments
         try:
             await self._connect_instruments(config)
-        except Exception as e:
-            logger.error(f"Failed to connect instruments: {e}")
-            self.data_logger.append_log(f"ERROR: Failed to connect instruments: {e}")
-            self._disconnect_instruments()
-            raise
 
-        # Start camera recording
-        camera_started = await self.camera.start_recording()
-        if camera_started:
-            self.data_logger.append_log("Camera recording started")
-        else:
-            self.data_logger.append_log("WARNING: Camera not available")
+            self._record_camera_for_session = False
+            if config.record_camera:
+                await self._prepare_camera_for_sync(config.camera_ready_delay_seconds)
+            else:
+                self.data_logger.append_log("Camera recording disabled")
+        except Exception as e:
+            logger.error(f"Failed to start measurement: {e}")
+            self.data_logger.append_log(f"ERROR: Failed to start measurement: {e}")
+            if self.camera.is_recording:
+                await self.camera.stop_recording()
+            self._disconnect_instruments()
+            self.current_session_id = None
+            self.start_time = None
+            self._start_monotonic = None
+            raise
 
         # Start data logging
         self.data_logger.start_logging()
@@ -166,7 +172,26 @@ class MeasurementController:
             "last_late_by_ms": None,
         }
 
-        # Start DMM acquisition task
+        self._camera_start_task = None
+        self._camera_start_log_task = None
+        self.data_logger.append_log("Measurement t0")
+
+        if config.record_camera:
+            camera_start_requested_at = time.perf_counter()
+            camera_start_request_offset_ms = (
+                (camera_start_requested_at - self._start_monotonic) * 1000
+                if self._start_monotonic is not None
+                else 0.0
+            )
+            self._camera_start_task = asyncio.create_task(self.camera.start_recording())
+            self._camera_start_log_task = asyncio.create_task(
+                self._log_camera_start_result(
+                    self._camera_start_task,
+                    camera_start_request_offset_ms,
+                )
+            )
+
+        # Start DMM acquisition task as close as possible to the camera command.
         self._measurement_task = asyncio.create_task(
             self._dmm_acquisition_loop(config.sampling_rate_hz)
         )
@@ -192,6 +217,61 @@ class MeasurementController:
 
         logger.info(f"Measurement started: {self.current_session_id}")
         return self.current_session_id
+
+    async def _prepare_camera_for_sync(self, ready_delay_seconds: float):
+        """Prepare the camera before t0 without starting recording."""
+        camera_prepared = await self.camera.prepare()
+        if not camera_prepared:
+            self.data_logger.append_log("ERROR: Camera requested but not prepared")
+            raise RuntimeError(
+                "Camera recording was requested, but the camera could not be prepared. "
+                "Power-cycle or replug the camera, then verify `camera/CameraControl detect`."
+            )
+
+        self.data_logger.append_log("Camera prepared")
+        self._record_camera_for_session = True
+
+        if ready_delay_seconds > 0:
+            self.data_logger.append_log(f"Camera ready delay {ready_delay_seconds:.3f} s")
+            await asyncio.sleep(ready_delay_seconds)
+
+    async def _log_camera_start_result(
+        self,
+        camera_start_task: asyncio.Task,
+        camera_start_request_offset_ms: float,
+    ):
+        """Log camera start acknowledgement without delaying relay/DMM/voltage t0."""
+        camera_started = await camera_start_task
+        camera_start_ack_ms = (
+            (time.perf_counter() - self._start_monotonic) * 1000
+            if self._start_monotonic is not None
+            else 0.0
+        )
+        camera_command_ms = (
+            self.camera.last_command_elapsed_us / 1000
+            if self.camera.last_command_elapsed_us is not None
+            else None
+        )
+
+        if not camera_started:
+            self.data_logger.append_log(
+                "ERROR: Camera did not start; command requested "
+                f"{camera_start_request_offset_ms:.3f} ms after measurement t0; "
+                f"failed/acknowledged {camera_start_ack_ms:.3f} ms after measurement t0"
+            )
+            return
+
+        command_detail = (
+            f"; camera command {camera_command_ms:.3f} ms"
+            if camera_command_ms is not None
+            else ""
+        )
+        self.data_logger.append_log(
+            "Camera start command requested "
+            f"{camera_start_request_offset_ms:.3f} ms after measurement t0; "
+            f"acknowledged {camera_start_ack_ms:.3f} ms after measurement t0"
+            f"{command_detail}"
+        )
 
     async def stop_measurement(self) -> dict:
         """
@@ -221,6 +301,18 @@ class MeasurementController:
             except asyncio.CancelledError:
                 pass
 
+        if self._camera_start_task and not self._camera_start_task.done():
+            try:
+                await self._camera_start_task
+            except Exception:
+                pass
+
+        if self._camera_start_log_task and not self._camera_start_log_task.done():
+            try:
+                await self._camera_start_log_task
+            except Exception:
+                pass
+
         for task in self._relay_stage_tasks:
             task.cancel()
             try:
@@ -230,8 +322,11 @@ class MeasurementController:
         self._relay_stage_tasks.clear()
 
         # Stop camera
-        await self.camera.stop_recording()
-        self.data_logger.append_log("Camera recording stopped")
+        if self._record_camera_for_session and self.camera.is_recording:
+            await self.camera.stop_recording()
+            self.data_logger.append_log("Camera recording stopped")
+        elif self._record_camera_for_session:
+            self.data_logger.append_log("Camera was requested but was not recording at stop")
 
         # Stop data logging
         self.data_logger.stop_logging()

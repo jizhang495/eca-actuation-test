@@ -90,6 +90,38 @@ start_service() {
     echo "✓ $name started (PID: $pid) - Logs: $log_file"
 }
 
+build_camera_control() {
+    local sdk_dir="camera/EDSDK/EDSDKv132010L/Linux/EDSDK"
+    local camera_bin="camera/CameraControl"
+    local camera_lib="camera/libEDSDK.so"
+
+    if [ ! -d "$sdk_dir" ]; then
+        if [ ! -x "$camera_bin" ]; then
+            echo "Camera EDSDK not found; camera service will run in mock mode."
+        fi
+        return
+    fi
+
+    if [ ! -x "camera/build_camera.sh" ]; then
+        echo "Camera build script is not executable; skipping CameraControl build."
+        return
+    fi
+
+    if [ ! -x "$camera_bin" ] || [ ! -f "$camera_lib" ] || [ "camera/CameraControl.cpp" -nt "$camera_bin" ] || [ "camera/build_camera.sh" -nt "$camera_bin" ]; then
+        echo "Building CameraControl..."
+        if (cd camera && ./build_camera.sh); then
+            echo "✓ CameraControl ready."
+        else
+            echo "CameraControl build failed; camera service may run in mock mode."
+        fi
+    else
+        echo "✓ CameraControl already built."
+    fi
+}
+
+# Build the Canon EDSDK bridge before the camera service starts when the SDK is available.
+build_camera_control
+
 # Start camera service first so backend can detect it during startup
 start_service "Camera service" 8001 "camera" "uv run camera_service.py" "camera.log" CAMERA_PID
 

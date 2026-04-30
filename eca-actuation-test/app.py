@@ -131,6 +131,7 @@ async def get_status():
         System status including instrument connections and measurement state
     """
     try:
+        await controller.camera.check_availability()
         status = controller.get_status()
         return status
     except Exception as e:
@@ -301,4 +302,3 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

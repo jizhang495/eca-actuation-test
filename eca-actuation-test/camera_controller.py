@@ -25,6 +25,7 @@ class CameraController:
         self.camera_service_url = camera_service_url
         self._is_recording = False
         self._is_available = False
+        self._last_command_elapsed_us: Optional[int] = None
 
     async def check_availability(self) -> bool:
         """
@@ -37,9 +38,37 @@ class CameraController:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.get(f"{self.camera_service_url}/status")
                 self._is_available = response.status_code == 200
+                if response.status_code == 200:
+                    data = response.json()
+                    self._is_recording = data.get("is_recording", False)
+                    self._last_command_elapsed_us = data.get("last_command_elapsed_us")
                 return self._is_available
         except Exception as e:
             logger.warning(f"Camera service not available: {e}")
+            self._is_available = False
+            return False
+
+    async def prepare(self) -> bool:
+        """
+        Initialize the camera session ahead of the experiment start clock.
+
+        This avoids paying EDSDK startup and camera discovery latency at the
+        measurement start boundary.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                response = await client.post(f"{self.camera_service_url}/prepare")
+
+                if response.status_code == 200:
+                    self._is_available = True
+                    logger.info("Camera prepared")
+                    return True
+
+                logger.error(f"Failed to prepare camera: {response.text}")
+                self._is_available = False
+                return False
+        except Exception as e:
+            logger.error(f"Error preparing camera: {e}")
             self._is_available = False
             return False
 
@@ -51,11 +80,14 @@ class CameraController:
             True if successful, False otherwise
         """
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(f"{self.camera_service_url}/start_record")
                 
                 if response.status_code == 200:
+                    data = response.json()
                     self._is_recording = True
+                    self._is_available = True
+                    self._last_command_elapsed_us = data.get("elapsed_us")
                     logger.info("Camera recording started")
                     return True
                 else:
@@ -64,10 +96,9 @@ class CameraController:
                     
         except Exception as e:
             logger.error(f"Error starting camera recording: {e}")
-            # In development mode without camera service, we can mock success
-            logger.warning("Camera service not available - running in mock mode")
-            self._is_recording = True
-            return True
+            self._is_available = False
+            self._is_recording = False
+            return False
 
     async def stop_recording(self) -> bool:
         """
@@ -77,11 +108,13 @@ class CameraController:
             True if successful, False otherwise
         """
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 response = await client.post(f"{self.camera_service_url}/stop_record")
                 
                 if response.status_code == 200:
+                    data = response.json()
                     self._is_recording = False
+                    self._last_command_elapsed_us = data.get("elapsed_us")
                     logger.info("Camera recording stopped")
                     return True
                 else:
@@ -90,10 +123,8 @@ class CameraController:
                     
         except Exception as e:
             logger.error(f"Error stopping camera recording: {e}")
-            # In development mode without camera service, we can mock success
-            logger.warning("Camera service not available - running in mock mode")
             self._is_recording = False
-            return True
+            return False
 
     def get_status(self) -> dict:
         """
@@ -104,7 +135,8 @@ class CameraController:
         """
         return {
             "is_recording": self._is_recording,
-            "is_available": self._is_available
+            "is_available": self._is_available,
+            "last_command_elapsed_us": self._last_command_elapsed_us,
         }
 
     @property
@@ -117,3 +149,7 @@ class CameraController:
         """Check if camera service is available."""
         return self._is_available
 
+    @property
+    def last_command_elapsed_us(self) -> Optional[int]:
+        """Last camera command duration reported by the camera service."""
+        return self._last_command_elapsed_us
