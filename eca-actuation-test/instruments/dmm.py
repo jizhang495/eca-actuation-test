@@ -6,6 +6,19 @@ import pyvisa
 
 logger = logging.getLogger(__name__)
 
+DMM_ACQUISITION_MODES = {
+    "fast": {
+        "nplc": 0.02,
+        "zero_auto": "OFF",
+        "description": "fast DC voltage reads",
+    },
+    "low_noise": {
+        "nplc": 1.0,
+        "zero_auto": "ON",
+        "description": "low-noise DC voltage reads",
+    },
+}
+
 
 class KeithleyDMM:
     """Driver for Keithley 2110 Digital Multimeter."""
@@ -115,23 +128,27 @@ class KeithleyDMM:
         except Exception as e:
             logger.error(f"Failed to configure DMM: {e}")
 
-    def configure_fast_dc_voltage(self, range_val: float = 10.0, nplc: float = 0.02):
+    def configure_acquisition_mode(self, mode: str = "fast", range_val: float = 10.0):
         """
-        Configure the DMM for faster polling at lower integration time.
+        Configure the DMM DC voltage measurement mode.
 
-        This trades some noise rejection and accuracy for higher time resolution. The
-        measurement loop still records actual timestamps and loop durations, so any
-        instrument-side limit remains visible in the saved CSV.
+        Fast mode uses short integration for time resolution. Low-noise mode
+        uses one power-line cycle integration and auto-zero for better rejection
+        of floating-lead and mains pickup at the cost of sample rate.
         """
         if not self._is_connected or not self.instrument:
             logger.warning("DMM not connected")
             return
 
+        settings = DMM_ACQUISITION_MODES.get(mode)
+        if not settings:
+            raise ValueError(f"Unsupported DMM acquisition mode: {mode}")
+
         commands = [
             f"CONF:VOLT:DC {range_val}",
             f"VOLT:DC:RANG {range_val}",
-            f"VOLT:DC:NPLC {nplc}",
-            "ZERO:AUTO OFF",
+            f"VOLT:DC:NPLC {settings['nplc']}",
+            f"ZERO:AUTO {settings['zero_auto']}",
             "TRIG:SOUR IMM",
             "SAMP:COUN 1",
         ]
@@ -140,9 +157,48 @@ class KeithleyDMM:
             try:
                 self.instrument.write(command)
             except Exception as e:
-                logger.warning(f"DMM fast config command failed ({command}): {e}")
+                logger.warning(f"DMM config command failed ({command}): {e}")
 
-        logger.info(f"DMM configured for faster DC voltage reads, range: {range_val}V, NPLC: {nplc}")
+        logger.info(
+            "DMM configured for %s, range: %sV, NPLC: %s, zero auto: %s",
+            settings["description"],
+            range_val,
+            settings["nplc"],
+            settings["zero_auto"],
+        )
+
+    def configure_fast_dc_voltage(self, range_val: float = 10.0, nplc: float = 0.02):
+        """
+        Configure the DMM for faster polling at lower integration time.
+
+        The nplc argument is kept for compatibility with older callers.
+        """
+        if nplc == DMM_ACQUISITION_MODES["fast"]["nplc"]:
+            self.configure_acquisition_mode("fast", range_val)
+            return
+
+        if not self._is_connected or not self.instrument:
+            logger.warning("DMM not connected")
+            return
+
+        for command in [
+            f"CONF:VOLT:DC {range_val}",
+            f"VOLT:DC:RANG {range_val}",
+            f"VOLT:DC:NPLC {nplc}",
+            "ZERO:AUTO OFF",
+            "TRIG:SOUR IMM",
+            "SAMP:COUN 1",
+        ]:
+            try:
+                self.instrument.write(command)
+            except Exception as e:
+                logger.warning(f"DMM config command failed ({command}): {e}")
+
+        logger.info(
+            "DMM configured for custom fast DC voltage reads, range: %sV, NPLC: %s",
+            range_val,
+            nplc,
+        )
 
     @property
     def is_connected(self) -> bool:

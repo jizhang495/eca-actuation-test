@@ -213,7 +213,8 @@ Content-Type: application/json
       {"start_time": 0, "end_time": 5, "state": "closed"}
     ],
     "relay_ch2_stages": [],
-    "sampling_rate_hz": 10
+    "sampling_rate_hz": 10,
+    "dmm_acquisition_mode": "fast"
   }
 }
 ```

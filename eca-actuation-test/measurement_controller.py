@@ -84,6 +84,7 @@ class MeasurementController:
         }
         self.acquisition_stats = {
             "requested_rate_hz": None,
+            "dmm_acquisition_mode": None,
             "sample_count": 0,
             "overrun_count": 0,
             "achieved_rate_hz": None,
@@ -164,6 +165,7 @@ class MeasurementController:
         }
         self.acquisition_stats = {
             "requested_rate_hz": config.sampling_rate_hz,
+            "dmm_acquisition_mode": config.dmm_acquisition_mode,
             "sample_count": 0,
             "overrun_count": 0,
             "achieved_rate_hz": None,
@@ -175,6 +177,7 @@ class MeasurementController:
         self._camera_start_task = None
         self._camera_start_log_task = None
         self.data_logger.append_log("Measurement t0")
+        self.data_logger.append_log(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
 
         if config.record_camera:
             camera_start_requested_at = time.perf_counter()
@@ -363,6 +366,12 @@ class MeasurementController:
         if config.dmm1_visa_id and config.dmm2_visa_id and config.dmm1_visa_id == config.dmm2_visa_id:
             raise RuntimeError("DMM1 and DMM2 must use different VISA IDs")
 
+        if config.dmm_acquisition_mode == "low_noise" and config.sampling_rate_hz > 20:
+            logger.warning(
+                "Low-noise DMM mode uses 1 PLC integration and may not sustain %.1f Hz",
+                config.sampling_rate_hz,
+            )
+
         for index, stage in enumerate(config.voltage_stages, start=1):
             if stage.end_time <= stage.start_time:
                 raise RuntimeError(f"Power stage {index} end time must be after start time")
@@ -380,9 +389,11 @@ class MeasurementController:
         if self.use_mock:
             # Auto-connect mock instruments
             self.dmm1.connect(config.dmm1_visa_id or "MOCK::DMM::DMM1::INSTR")
+            self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
             logger.info(f"Mock DMM1 connected")
             
             self.dmm2.connect(config.dmm2_visa_id or "MOCK::DMM::DMM2::INSTR")
+            self.dmm2.configure_acquisition_mode(config.dmm_acquisition_mode)
             logger.info(f"Mock DMM2 connected")
             
             self.power_supply.connect(config.power_supply_visa_id or "MOCK::POWER::IT6412::INSTR")
@@ -396,14 +407,14 @@ class MeasurementController:
                 success = self.dmm1.connect(config.dmm1_visa_id)
                 if not success:
                     raise RuntimeError(f"Failed to connect DMM1: {config.dmm1_visa_id}")
-                self.dmm1.configure_fast_dc_voltage()
+                self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
                 logger.info(f"DMM1 connected: {config.dmm1_visa_id}")
 
             if config.dmm2_visa_id:
                 success = self.dmm2.connect(config.dmm2_visa_id)
                 if not success:
                     raise RuntimeError(f"Failed to connect DMM2: {config.dmm2_visa_id}")
-                self.dmm2.configure_fast_dc_voltage()
+                self.dmm2.configure_acquisition_mode(config.dmm_acquisition_mode)
                 logger.info(f"DMM2 connected: {config.dmm2_visa_id}")
 
             if config.power_supply_visa_id:

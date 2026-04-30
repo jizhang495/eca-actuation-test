@@ -5,6 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DMMGraph } from "@/components/DMMGraph";
 import { VoltageStageConfigurator, VoltageStage } from "@/components/VoltageStageConfigurator";
 import { RelayStageConfigurator, RelayStage } from "@/components/RelayStageConfigurator";
@@ -30,6 +37,7 @@ interface VisaResourceOption {
 }
 
 const MAX_DATA_POINTS = 6000; // WebSocket updates at 10 Hz, so this keeps about 10 minutes visible.
+type DmmAcquisitionMode = "fast" | "low_noise";
 
 export default function Home() {
   // State for measurements
@@ -67,6 +75,8 @@ export default function Home() {
   // State for test configuration
   const [testName, setTestName] = useState("test");
   const [samplingRate, setSamplingRate] = useState(10);
+  const [dmmAcquisitionMode, setDmmAcquisitionMode] =
+    useState<DmmAcquisitionMode>("fast");
   const [recordCamera, setRecordCamera] = useState(false);
   const [cameraReadyDelaySeconds, setCameraReadyDelaySeconds] = useState(1);
 
@@ -305,6 +315,7 @@ export default function Home() {
         relay_ch1_stages: relayCh1Stages,
         relay_ch2_stages: relayCh2Stages,
         sampling_rate_hz: samplingRate,
+        dmm_acquisition_mode: dmmAcquisitionMode,
         record_camera: recordCamera,
         camera_ready_delay_seconds: recordCamera ? cameraReadyDelaySeconds : 0,
       };
@@ -485,6 +496,29 @@ export default function Home() {
                       max={300}
                       className="h-9"
                     />
+                  </div>
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <Label
+                      htmlFor="dmm-acquisition-mode"
+                      className="text-xs uppercase tracking-wide text-muted-foreground"
+                    >
+                      DMM Mode
+                    </Label>
+                    <Select
+                      value={dmmAcquisitionMode}
+                      onValueChange={(value) =>
+                        setDmmAcquisitionMode(value as DmmAcquisitionMode)
+                      }
+                      disabled={isMeasuring || isStarting}
+                    >
+                      <SelectTrigger id="dmm-acquisition-mode" className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="fast">Fast (0.02 PLC)</SelectItem>
+                        <SelectItem value="low_noise">Low noise (1 PLC)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_8rem] sm:items-center">

@@ -65,6 +65,20 @@ class MockKeithleyDMM:
         if self._is_connected:
             logger.debug(f"Mock DMM ({self.name}) configured for DC voltage, range: {range_val}V")
 
+    def configure_acquisition_mode(self, mode: str = "fast", range_val: float = 10.0):
+        """Simulate acquisition mode configuration."""
+        if self._is_connected:
+            logger.debug(
+                "Mock DMM (%s) configured for mode %s, range: %sV",
+                self.name,
+                mode,
+                range_val,
+            )
+
+    def configure_fast_dc_voltage(self, range_val: float = 10.0, nplc: float = 0.02):
+        """Simulate fast configuration."""
+        self.configure_acquisition_mode("fast", range_val)
+
     def set_base_voltage(self, voltage: float):
         """Set the base voltage for simulation (for testing)."""
         self._base_voltage = voltage
@@ -281,4 +295,3 @@ class MockUSB_RLY08C:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
-
