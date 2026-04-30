@@ -28,6 +28,27 @@ interface DMMGraphProps {
   onVisaChange: (value: string) => void;
 }
 
+const formatWholeSeconds = (value: number | string) => {
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) return "";
+  return numericValue.toFixed(0);
+};
+
+const getWholeSecondStep = (spanSeconds: number, targetTickCount = 10) => {
+  if (spanSeconds <= 12) return 1;
+  if (spanSeconds <= 30) return 2;
+  if (spanSeconds <= 60) return 5;
+
+  const roughStep = Math.max(1, Math.ceil(spanSeconds / Math.max(1, targetTickCount - 1)));
+  const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+  const normalized = roughStep / magnitude;
+
+  if (normalized <= 1) return magnitude;
+  if (normalized <= 2) return 2 * magnitude;
+  if (normalized <= 5) return 5 * magnitude;
+  return 10 * magnitude;
+};
+
 export function DMMGraph({
   title,
   data,
@@ -55,20 +76,19 @@ export function DMMGraph({
     
     if (times.length === 0 || voltages.length === 0) return null;
     
-    const timeMin = Math.min(...times);
     const timeMax = Math.max(...times);
     const voltageMin = Math.min(...voltages);
     const voltageMax = Math.max(...voltages);
     
-    const timeRange = timeMax - timeMin;
     const voltageRange = voltageMax - voltageMin;
     
-    // Add small padding (2% on each side)
-    const timePadding = timeRange * 0.02 || 0.1;
+    // Keep the x-axis in experiment time. If the browser connects after t=0,
+    // the axis should still show elapsed seconds from the start of the run.
+    const timePadding = Math.max(timeMax * 0.02, 0.1);
     const voltagePadding = voltageRange * 0.02 || 0.1;
     
     return {
-      time: [timeMin - timePadding, timeMax + timePadding] as [number, number],
+      time: [0, Math.max(1, timeMax + timePadding)] as [number, number],
       voltage: [voltageMin - voltagePadding, voltageMax + voltagePadding] as [number, number],
     };
   }, [data]);
@@ -235,8 +255,28 @@ export function DMMGraph({
     [dataRange, xDomain, yDomain, clampDomain]
   );
 
+  const xTicks = useMemo(() => {
+    const domain = xDomain || dataRange?.time;
+    if (!domain) return undefined;
+
+    const [min, max] = domain;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+      return undefined;
+    }
+
+    const step = getWholeSecondStep(max - min);
+    const firstTick = Math.ceil(min / step) * step;
+    const ticks: number[] = [];
+
+    for (let tick = firstTick; tick <= max + 1e-9; tick += step) {
+      ticks.push(Math.round(tick));
+    }
+
+    return ticks.length > 0 ? Array.from(new Set(ticks)) : undefined;
+  }, [xDomain, dataRange]);
+
   return (
-    <Card className="min-w-0 w-full">
+    <Card className="min-w-0 w-full overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-lg">{title}</CardTitle>
@@ -274,12 +314,12 @@ export function DMMGraph({
           onDoubleClick={handleDoubleClick}
           onWheel={handleWheel}
           style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
-          className="select-none"
+          className="min-w-0 select-none overflow-hidden"
         >
-          <ResponsiveContainer width="100%" height={280}>
+          <ResponsiveContainer width="100%" height={260}>
             <LineChart
               data={data}
-              margin={{ top: 5, right: 10, bottom: 20, left: 10 }}
+              margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis
@@ -287,7 +327,13 @@ export function DMMGraph({
                 domain={xDomain}
                 type="number"
                 scale="linear"
-                label={{ value: "Time (s)", position: "insideBottom", offset: -5 }}
+                allowDecimals={false}
+                ticks={xTicks}
+                interval={0}
+                minTickGap={24}
+                tickFormatter={formatWholeSeconds}
+                tickMargin={8}
+                height={34}
                 tick={{ fontSize: 12 }}
               />
               <YAxis
@@ -309,6 +355,7 @@ export function DMMGraph({
               />
             </LineChart>
           </ResponsiveContainer>
+          <div className="mt-1 text-center text-sm text-muted-foreground">Time (s)</div>
         </div>
       </CardContent>
     </Card>

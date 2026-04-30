@@ -29,7 +29,7 @@ interface VisaResourceOption {
   kind?: string;
 }
 
-const MAX_DATA_POINTS = 500; // Limit data points shown on graph
+const MAX_DATA_POINTS = 6000; // WebSocket updates at 10 Hz, so this keeps about 10 minutes visible.
 
 export default function Home() {
   // State for measurements
@@ -428,9 +428,9 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
           {/* Left Column - DMM Graphs */}
-          <div className="min-w-0 lg:col-span-2 space-y-6">
+          <div className="min-w-0 space-y-6">
             <DMMGraph
               title="DMM 1"
               data={dmm1Data}
@@ -448,7 +448,7 @@ export default function Home() {
           </div>
 
           {/* Right Column - Controls */}
-          <div className="space-y-6">
+          <div className="min-w-0 space-y-6">
             <Card>
               <CardContent className="pt-6">
                 <div className="grid gap-4 sm:grid-cols-2">
