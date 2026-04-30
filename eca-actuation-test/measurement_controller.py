@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import time
+from collections import deque
+from datetime import datetime
 from typing import Optional
 import pyvisa
 
@@ -10,7 +12,7 @@ from instruments import KeithleyDMM, IT6412PowerSupply, USB_RLY08C
 from instruments.mock import MockKeithleyDMM, MockIT6412PowerSupply, MockUSB_RLY08C
 from camera_controller import CameraController
 from data_logger import DataLogger
-from api_models import MeasurementConfig, VoltageStage, RelayStage
+from api_models import ControlSource, MeasurementConfig, VoltageStage, RelayStage
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,9 @@ class MeasurementController:
 
         self.is_measuring = False
         self.current_session_id: Optional[str] = None
+        self.current_config: Optional[MeasurementConfig] = None
+        self.control_source: Optional[ControlSource] = None
+        self.runtime_events = deque(maxlen=200)
         self.start_time: Optional[float] = None
         self._start_monotonic: Optional[float] = None
         self.latest_reading = {
@@ -100,8 +105,13 @@ class MeasurementController:
         self._record_camera_for_session = False
         self._relay_stage_tasks: list[asyncio.Task] = []
         self._relay_lock = asyncio.Lock()
+        self._visa_details_cache: dict[str, dict] = {}
 
-    async def start_measurement(self, config: MeasurementConfig) -> str:
+    async def start_measurement(
+        self,
+        config: MeasurementConfig,
+        control_source: ControlSource = "api",
+    ) -> str:
         """
         Start a measurement with the given configuration.
 
@@ -119,13 +129,19 @@ class MeasurementController:
 
         logger.info("Starting measurement...")
         self._validate_config(config)
+        self.runtime_events.clear()
+        self.current_config = config.model_copy(deep=True)
+        self.control_source = control_source
 
         # Create new session
         self.current_session_id = self.data_logger.create_session(config.test_name)
         
         # Save configuration
         self.data_logger.save_config(config.model_dump())
-        self.data_logger.append_log("Session created; preparing hardware")
+        self._record_event(
+            f"Measurement requested by {control_source}; preparing hardware",
+            source=control_source,
+        )
 
         try:
             await self._connect_instruments(config)
@@ -134,14 +150,16 @@ class MeasurementController:
             if config.record_camera:
                 await self._prepare_camera_for_sync(config.camera_ready_delay_seconds)
             else:
-                self.data_logger.append_log("Camera recording disabled")
+                self._record_event("Camera recording disabled")
         except Exception as e:
             logger.error(f"Failed to start measurement: {e}")
-            self.data_logger.append_log(f"ERROR: Failed to start measurement: {e}")
+            self._record_event(f"Failed to start measurement: {e}", kind="error")
             if self.camera.is_recording:
                 await self.camera.stop_recording()
             self._disconnect_instruments()
             self.current_session_id = None
+            self.current_config = None
+            self.control_source = None
             self.start_time = None
             self._start_monotonic = None
             raise
@@ -176,8 +194,8 @@ class MeasurementController:
 
         self._camera_start_task = None
         self._camera_start_log_task = None
-        self.data_logger.append_log("Measurement t0")
-        self.data_logger.append_log(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
+        self._record_event("Measurement t0")
+        self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
 
         if config.record_camera:
             camera_start_requested_at = time.perf_counter()
@@ -221,21 +239,45 @@ class MeasurementController:
         logger.info(f"Measurement started: {self.current_session_id}")
         return self.current_session_id
 
+    def _record_event(
+        self,
+        message: str,
+        kind: str = "info",
+        source: Optional[ControlSource] = None,
+        elapsed_time: Optional[float] = None,
+        log: bool = True,
+    ):
+        """Record an operator/agent visible runtime event and mirror it to the session log."""
+        if elapsed_time is None and self._start_monotonic is not None:
+            elapsed_time = max(0.0, time.perf_counter() - self._start_monotonic)
+
+        event = {
+            "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+            "message": message,
+            "kind": kind,
+            "source": source or self.control_source,
+            "elapsed_time": round(elapsed_time, 3) if elapsed_time is not None else None,
+        }
+        self.runtime_events.append(event)
+
+        if log:
+            self.data_logger.append_log(message)
+
     async def _prepare_camera_for_sync(self, ready_delay_seconds: float):
         """Prepare the camera before t0 without starting recording."""
         camera_prepared = await self.camera.prepare()
         if not camera_prepared:
-            self.data_logger.append_log("ERROR: Camera requested but not prepared")
+            self._record_event("Camera requested but not prepared", kind="error")
             raise RuntimeError(
                 "Camera recording was requested, but the camera could not be prepared. "
                 "Power-cycle or replug the camera, then verify `camera/CameraControl detect`."
             )
 
-        self.data_logger.append_log("Camera prepared")
+        self._record_event("Camera prepared")
         self._record_camera_for_session = True
 
         if ready_delay_seconds > 0:
-            self.data_logger.append_log(f"Camera ready delay {ready_delay_seconds:.3f} s")
+            self._record_event(f"Camera ready delay {ready_delay_seconds:.3f} s")
             await asyncio.sleep(ready_delay_seconds)
 
     async def _log_camera_start_result(
@@ -257,10 +299,11 @@ class MeasurementController:
         )
 
         if not camera_started:
-            self.data_logger.append_log(
+            self._record_event(
                 "ERROR: Camera did not start; command requested "
                 f"{camera_start_request_offset_ms:.3f} ms after measurement t0; "
-                f"failed/acknowledged {camera_start_ack_ms:.3f} ms after measurement t0"
+                f"failed/acknowledged {camera_start_ack_ms:.3f} ms after measurement t0",
+                kind="error",
             )
             return
 
@@ -269,14 +312,14 @@ class MeasurementController:
             if camera_command_ms is not None
             else ""
         )
-        self.data_logger.append_log(
+        self._record_event(
             "Camera start command requested "
             f"{camera_start_request_offset_ms:.3f} ms after measurement t0; "
             f"acknowledged {camera_start_ack_ms:.3f} ms after measurement t0"
             f"{command_detail}"
         )
 
-    async def stop_measurement(self) -> dict:
+    async def stop_measurement(self, control_source: ControlSource = "api") -> dict:
         """
         Stop the current measurement.
 
@@ -287,6 +330,7 @@ class MeasurementController:
             raise RuntimeError("No measurement in progress")
 
         logger.info("Stopping measurement...")
+        self._record_event(f"Stop requested by {control_source}", source=control_source)
         self.is_measuring = False
 
         # Cancel all tasks
@@ -327,9 +371,9 @@ class MeasurementController:
         # Stop camera
         if self._record_camera_for_session and self.camera.is_recording:
             await self.camera.stop_recording()
-            self.data_logger.append_log("Camera recording stopped")
+            self._record_event("Camera recording stopped")
         elif self._record_camera_for_session:
-            self.data_logger.append_log("Camera was requested but was not recording at stop")
+            self._record_event("Camera was requested but was not recording at stop", kind="warning")
 
         # Stop data logging
         self.data_logger.stop_logging()
@@ -346,12 +390,13 @@ class MeasurementController:
             "log_path": str(self.data_logger.log_file)
         }
 
-        self.data_logger.append_log("Measurement stopped")
+        self._record_event("Measurement stopped", source=control_source)
         logger.info(f"Measurement stopped: {self.current_session_id}")
 
         self.current_session_id = None
         self.start_time = None
         self._start_monotonic = None
+        self.control_source = None
 
         return response
 
@@ -573,7 +618,7 @@ class MeasurementController:
                 # Set voltage
                 await asyncio.to_thread(self.power_supply.set_voltage, stage.voltage)
                 logger.info(f"Voltage stage {i+1}: {stage.voltage}V at {elapsed:.2f}s")
-                self.data_logger.append_log(f"Voltage set to {stage.voltage}V")
+                self._record_event(f"Voltage set to {stage.voltage}V")
 
                 # Wait until stage end time
                 while True:
@@ -620,7 +665,7 @@ class MeasurementController:
                     raise RuntimeError(f"Failed to set relay CH{channel} to {stage.state}")
 
                 logger.info(f"Relay CH{channel} stage {i+1}: {stage.state} at {elapsed:.2f}s")
-                self.data_logger.append_log(f"Relay CH{channel} set to {stage.state}")
+                self._record_event(f"Relay CH{channel} set to {stage.state}")
 
                 # Wait until stage end time
                 while True:
@@ -663,6 +708,9 @@ class MeasurementController:
             "elapsed_time": elapsed,
             "mock_mode": self.use_mock,
             "acquisition": self.acquisition_stats,
+            "active_config": self.current_config.model_dump() if self.current_config else None,
+            "control_source": self.control_source,
+            "events": list(self.runtime_events),
             "instruments": [
                 {
                     "name": "DMM1" + (" (MOCK)" if self.use_mock else ""),
@@ -709,7 +757,13 @@ class MeasurementController:
         else:
             visa_resources = self.dmm1.list_available_devices()
             serial_ports = USB_RLY08C.list_available_ports()
-            visa_details = [self._identify_visa_resource(resource) for resource in visa_resources]
+            if self.is_measuring:
+                visa_details = [
+                    self._visa_details_cache.get(resource) or self._infer_visa_resource(resource)
+                    for resource in visa_resources
+                ]
+            else:
+                visa_details = [self._identify_visa_resource(resource) for resource in visa_resources]
 
         dmm_resources = [item["resource"] for item in visa_details if item["kind"] == "dmm"]
         power_supply_resources = [
@@ -724,19 +778,9 @@ class MeasurementController:
             "serial_ports": serial_ports
         }
 
-    def _identify_visa_resource(self, resource: str) -> dict:
-        """Query *IDN? and classify VISA resources for safer UI selection."""
-        idn = None
+    def _infer_visa_resource(self, resource: str, idn: Optional[str] = None) -> dict:
+        """Classify a VISA resource from cached IDN data or known USB IDs."""
         kind = "unknown"
-
-        try:
-            rm = pyvisa.ResourceManager()
-            instrument = rm.open_resource(resource)
-            instrument.timeout = 1000
-            idn = instrument.query("*IDN?").strip()
-            instrument.close()
-        except Exception as e:
-            logger.warning(f"Failed to identify VISA resource {resource}: {e}")
 
         upper_idn = (idn or "").upper()
         upper_resource = resource.upper()
@@ -763,6 +807,24 @@ class MeasurementController:
             "label": label,
         }
 
+    def _identify_visa_resource(self, resource: str) -> dict:
+        """Query *IDN? and classify VISA resources for safer UI selection."""
+        idn = None
+
+        try:
+            rm = pyvisa.ResourceManager()
+            instrument = rm.open_resource(resource)
+            instrument.timeout = 1000
+            idn = instrument.query("*IDN?").strip()
+            instrument.close()
+        except Exception as e:
+            logger.warning(f"Failed to identify VISA resource {resource}: {e}")
+
+        detail = self._infer_visa_resource(resource, idn)
+        if idn:
+            self._visa_details_cache[resource] = detail
+        return detail
+
     def get_current_reading(self) -> dict:
         """
         Get the most recent DMM reading.
@@ -783,3 +845,7 @@ class MeasurementController:
             "late_by_ms": None,
             "overrun": False,
         }
+
+    def get_current_session_data(self, limit: int = 6000) -> list[dict]:
+        """Return recent data from the active/most recent in-memory session."""
+        return self.data_logger.get_recent_data(limit)

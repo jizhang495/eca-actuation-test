@@ -29,6 +29,50 @@ interface DMMReading {
   overrun?: boolean;
 }
 
+type ControlSource = "ui" | "api" | "agent" | "script";
+type DmmAcquisitionMode = "fast" | "low_noise";
+
+interface MeasurementConfig {
+  test_name: string;
+  dmm1_visa_id: string | null;
+  dmm2_visa_id: string | null;
+  power_supply_visa_id: string | null;
+  relay_port: string | null;
+  voltage_stages: Array<{ start_time: number; end_time: number; voltage: number }>;
+  relay_ch1_stages: RelayStage[];
+  relay_ch2_stages: RelayStage[];
+  sampling_rate_hz: number;
+  dmm_acquisition_mode?: DmmAcquisitionMode;
+  record_camera: boolean;
+  camera_ready_delay_seconds: number;
+}
+
+interface RuntimeEvent {
+  timestamp: string;
+  message: string;
+  kind: string;
+  source?: ControlSource | null;
+  elapsed_time?: number | null;
+}
+
+interface SystemStatus {
+  is_measuring: boolean;
+  camera_recording: boolean;
+  camera_available: boolean;
+  session_id: string | null;
+  elapsed_time?: number | null;
+  active_config?: MeasurementConfig | null;
+  control_source?: ControlSource | null;
+  events?: RuntimeEvent[];
+  acquisition?: {
+    read_duration_ms?: number | null;
+    last_read_duration_ms?: number | null;
+    loop_duration_ms?: number | null;
+    last_loop_duration_ms?: number | null;
+    overrun?: boolean;
+  };
+}
+
 interface VisaResourceOption {
   resource: string;
   label: string;
@@ -37,7 +81,6 @@ interface VisaResourceOption {
 }
 
 const MAX_DATA_POINTS = 6000; // WebSocket updates at 10 Hz, so this keeps about 10 minutes visible.
-type DmmAcquisitionMode = "fast" | "low_noise";
 
 export default function Home() {
   // State for measurements
@@ -45,6 +88,8 @@ export default function Home() {
   const [isStarting, setIsStarting] = useState(false);
   const [cameraStatus, setCameraStatus] = useState({ recording: false, available: false });
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [controlSource, setControlSource] = useState<ControlSource | null>(null);
+  const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
   const [latestTiming, setLatestTiming] = useState<{
     readDurationMs?: number | null;
@@ -83,18 +128,13 @@ export default function Home() {
   // WebSocket reference
   const wsRef = useRef<WebSocket | null>(null);
   const isMeasuringRef = useRef(false);
-
-  // Fetch available instruments on mount
-  useEffect(() => {
-    fetchInstruments();
-    fetchStatus();
-  }, []);
+  const syncedSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
     isMeasuringRef.current = isMeasuring;
   }, [isMeasuring]);
 
-  const fetchInstruments = async () => {
+  const fetchInstruments = useCallback(async () => {
     try {
       const response = await fetch("/api/list_instruments");
       const data = await response.json();
@@ -134,23 +174,135 @@ export default function Home() {
     } catch (error) {
       console.error("Failed to fetch instruments:", error);
     }
-  };
+  }, []);
 
-  const fetchStatus = async () => {
+  const applyMeasurementConfig = useCallback((config: MeasurementConfig) => {
+    setTestName(config.test_name || "test");
+    setDmm1Visa(config.dmm1_visa_id || "");
+    setDmm2Visa(config.dmm2_visa_id || "");
+    setPowerSupplyVisa(config.power_supply_visa_id || "");
+    setRelayPort(config.relay_port || "");
+    setVoltageStages(
+      (config.voltage_stages || []).map((stage) => ({
+        ...stage,
+        voltageExpression: String(stage.voltage),
+        voltageExpressionError: undefined,
+      }))
+    );
+    setRelayCh1Stages(config.relay_ch1_stages || []);
+    setRelayCh2Stages(config.relay_ch2_stages || []);
+    setSamplingRate(config.sampling_rate_hz || 10);
+    setDmmAcquisitionMode(config.dmm_acquisition_mode || "fast");
+    setRecordCamera(Boolean(config.record_camera));
+    setCameraReadyDelaySeconds(config.camera_ready_delay_seconds ?? 0);
+  }, []);
+
+  const replaceLiveData = useCallback((readings: DMMReading[]) => {
+    const dmm1 = readings
+      .filter((reading) => reading.time !== null && reading.dmm1_voltage !== null)
+      .map((reading) => ({ time: reading.time, voltage: reading.dmm1_voltage! }))
+      .slice(-MAX_DATA_POINTS);
+    const dmm2 = readings
+      .filter((reading) => reading.time !== null && reading.dmm2_voltage !== null)
+      .map((reading) => ({ time: reading.time, voltage: reading.dmm2_voltage! }))
+      .slice(-MAX_DATA_POINTS);
+
+    setDmm1Data(dmm1);
+    setDmm2Data(dmm2);
+
+    const latest = readings[readings.length - 1];
+    if (latest?.time !== null && latest?.time !== undefined) {
+      setElapsedTime(latest.time);
+      setLatestTiming({
+        readDurationMs: latest.read_duration_ms,
+        loopDurationMs: latest.loop_duration_ms,
+        overrun: latest.overrun,
+      });
+    }
+  }, []);
+
+  const loadCurrentSessionData = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/current_session/data?limit=${MAX_DATA_POINTS}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      replaceLiveData(data.data || []);
+    } catch (error) {
+      console.error("Failed to fetch current session data:", error);
+    }
+  }, [replaceLiveData]);
+
+  const appendReading = useCallback((reading: DMMReading) => {
+    if (reading.time === null || reading.time === undefined) return;
+
+    if (reading.dmm1_voltage !== null) {
+      setDmm1Data((prev) => {
+        if (prev[prev.length - 1]?.time === reading.time) return prev;
+        return [...prev, { time: reading.time, voltage: reading.dmm1_voltage! }].slice(
+          -MAX_DATA_POINTS
+        );
+      });
+    }
+
+    if (reading.dmm2_voltage !== null) {
+      setDmm2Data((prev) => {
+        if (prev[prev.length - 1]?.time === reading.time) return prev;
+        return [...prev, { time: reading.time, voltage: reading.dmm2_voltage! }].slice(
+          -MAX_DATA_POINTS
+        );
+      });
+    }
+
+    setElapsedTime(reading.time);
+    setLatestTiming({
+      readDurationMs: reading.read_duration_ms,
+      loopDurationMs: reading.loop_duration_ms,
+      overrun: reading.overrun,
+    });
+  }, []);
+
+  const fetchStatus = useCallback(async () => {
     try {
       const response = await fetch("/api/status");
-      const data = await response.json();
+      const data: SystemStatus = await response.json();
+      const nextSessionId = data.session_id || null;
+
       setIsMeasuring(data.is_measuring);
       setCameraStatus({
         recording: data.camera_recording,
         available: data.camera_available,
       });
-      setSessionId(data.session_id);
+      setSessionId(nextSessionId);
+      setControlSource(data.control_source || null);
+      setRuntimeEvents(data.events || []);
       setElapsedTime(data.elapsed_time || 0);
+      setLatestTiming((prev) => ({
+        readDurationMs: data.acquisition?.last_read_duration_ms ?? prev.readDurationMs,
+        loopDurationMs: data.acquisition?.last_loop_duration_ms ?? prev.loopDurationMs,
+        overrun: data.acquisition?.overrun ?? prev.overrun,
+      }));
+
+      if (data.is_measuring && data.active_config && nextSessionId) {
+        if (syncedSessionRef.current !== nextSessionId) {
+          applyMeasurementConfig(data.active_config);
+          await loadCurrentSessionData();
+          syncedSessionRef.current = nextSessionId;
+        }
+      } else if (!data.is_measuring && syncedSessionRef.current && !nextSessionId) {
+        syncedSessionRef.current = null;
+      }
     } catch (error) {
       console.error("Failed to fetch status:", error);
     }
-  };
+  }, [applyMeasurementConfig, loadCurrentSessionData]);
+
+  useEffect(() => {
+    fetchInstruments();
+    fetchStatus();
+
+    const statusTimer = window.setInterval(fetchStatus, 1000);
+    return () => window.clearInterval(statusTimer);
+  }, [fetchInstruments, fetchStatus]);
 
   // WebSocket connection
   const connectWebSocket = useCallback(() => {
@@ -164,38 +316,7 @@ export default function Home() {
       try {
         const reading: DMMReading = JSON.parse(event.data);
 
-        if (reading.time !== null && reading.time !== undefined) {
-          // Update DMM1 data
-          if (reading.dmm1_voltage !== null) {
-            setDmm1Data((prev) => {
-              const newData = [
-                ...prev,
-                { time: reading.time, voltage: reading.dmm1_voltage! },
-              ];
-              // Limit data points
-              return newData.slice(-MAX_DATA_POINTS);
-            });
-          }
-
-          // Update DMM2 data
-          if (reading.dmm2_voltage !== null) {
-            setDmm2Data((prev) => {
-              const newData = [
-                ...prev,
-                { time: reading.time, voltage: reading.dmm2_voltage! },
-              ];
-              // Limit data points
-              return newData.slice(-MAX_DATA_POINTS);
-            });
-          }
-
-          setElapsedTime(reading.time);
-          setLatestTiming({
-            readDurationMs: reading.read_duration_ms,
-            loopDurationMs: reading.loop_duration_ms,
-            overrun: reading.overrun,
-          });
-        }
+        appendReading(reading);
       } catch (error) {
         console.error("Error parsing WebSocket message:", error);
       }
@@ -214,7 +335,7 @@ export default function Home() {
     };
 
     wsRef.current = ws;
-  }, []);
+  }, [appendReading]);
 
   const disconnectWebSocket = useCallback(() => {
     if (wsRef.current) {
@@ -323,7 +444,7 @@ export default function Home() {
       const response = await fetch("/api/start_measurement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config }),
+        body: JSON.stringify({ config, control_source: "ui" }),
       });
 
       if (!response.ok) {
@@ -335,6 +456,7 @@ export default function Home() {
 
       const data = await response.json();
       setSessionId(data.session_id);
+      setControlSource("ui");
       setIsMeasuring(true);
       setIsStarting(false);
 
@@ -354,7 +476,7 @@ export default function Home() {
 
   const handleStopMeasurement = async () => {
     try {
-      const response = await fetch("/api/stop_measurement", {
+      const response = await fetch("/api/stop_measurement?control_source=ui", {
         method: "POST",
       });
 
@@ -375,6 +497,17 @@ export default function Home() {
       alert("Failed to stop measurement. Check console for details.");
     }
   };
+
+  const controlSourceLabel =
+    controlSource === "ui"
+      ? "Human UI"
+      : controlSource === "agent"
+        ? "AI Agent"
+        : controlSource === "script"
+          ? "Script"
+          : controlSource === "api"
+            ? "API"
+            : "Idle";
 
   return (
     <div className="min-h-screen bg-background">
@@ -605,6 +738,9 @@ export default function Home() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm font-mono break-all">{sessionId}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Control: {controlSourceLabel}
+                  </p>
                   {latestTiming.loopDurationMs !== undefined && (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Read {latestTiming.readDurationMs?.toFixed(1)} ms · Loop{" "}
@@ -612,6 +748,41 @@ export default function Home() {
                       {latestTiming.overrun ? " · Overrun" : ""}
                     </p>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {runtimeEvents.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Runtime Log</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="max-h-64 space-y-2 overflow-auto text-xs">
+                    {runtimeEvents.slice(-20).map((event, index) => (
+                      <div
+                        key={`${event.timestamp}-${index}`}
+                        className="grid grid-cols-[4.5rem_1fr] gap-2 border-b border-border/60 pb-2 last:border-b-0 last:pb-0"
+                      >
+                        <span className="font-mono text-muted-foreground">
+                          {event.elapsed_time !== null && event.elapsed_time !== undefined
+                            ? `${event.elapsed_time.toFixed(3)}s`
+                            : "--"}
+                        </span>
+                        <span
+                          className={
+                            event.kind === "error"
+                              ? "text-destructive"
+                              : event.kind === "warning"
+                                ? "text-yellow-700"
+                                : "text-foreground"
+                          }
+                        >
+                          {event.message}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
             )}

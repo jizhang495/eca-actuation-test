@@ -254,6 +254,21 @@ class DataLogger:
         """
         return list(self.session_data)
 
+    def get_recent_data(self, limit: int = MAX_SESSION_DATA_POINTS) -> list[dict]:
+        """
+        Get the latest in-memory data points for live browser backfill.
+
+        Args:
+            limit: Maximum number of points to return.
+
+        Returns:
+            Latest data points from the current process memory.
+        """
+        data = list(self.session_data)
+        if limit <= 0:
+            return []
+        return data[-limit:]
+
     def get_session_dataframe(self) -> Optional[pd.DataFrame]:
         """
         Get session data as pandas DataFrame.

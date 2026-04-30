@@ -199,6 +199,7 @@ POST /api/start_measurement
 Content-Type: application/json
 
 {
+  "control_source": "api",
   "config": {
     "test_name": "test1",
     "dmm1_visa_id": "USB0::0x05E6::0x2110::...",
@@ -214,20 +215,38 @@ Content-Type: application/json
     ],
     "relay_ch2_stages": [],
     "sampling_rate_hz": 10,
-    "dmm_acquisition_mode": "fast"
+    "dmm_acquisition_mode": "fast",
+    "record_camera": false,
+    "camera_ready_delay_seconds": 0
   }
 }
 ```
 
+`control_source` may be `ui`, `api`, `agent`, or `script`. The browser polls
+`/api/status`, so API-started runs appear in the UI with the active config,
+control source, runtime log, and live plots.
+
 #### Stop Measurement
 ```http
-POST /api/stop_measurement
+POST /api/stop_measurement?control_source=api
 ```
 
 #### Get Status
 ```http
 GET /api/status
 ```
+
+The status response includes `active_config`, `control_source`, recent runtime
+`events`, acquisition timing, instrument connection state, and camera state.
+
+#### Get Current Session Data
+```http
+GET /api/current_session/data?limit=6000
+```
+
+Returns recent in-memory readings for the active run. The browser uses this to
+backfill plots when it is opened after an API agent or script has already
+started an experiment.
 
 #### List Instruments
 ```http

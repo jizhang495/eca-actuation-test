@@ -2,13 +2,15 @@
 
 import logging
 import asyncio
+import time
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from measurement_controller import MeasurementController
 from api_models import (
+    ControlSource,
     StartMeasurementRequest,
     StopMeasurementResponse,
     SystemStatus,
@@ -26,6 +28,16 @@ logger = logging.getLogger(__name__)
 
 # Global measurement controller
 controller = MeasurementController()
+_last_camera_status_check = 0.0
+
+
+async def refresh_camera_availability(force: bool = False):
+    """Refresh camera availability without making every status poll hit the camera service."""
+    global _last_camera_status_check
+    now = time.monotonic()
+    if force or now - _last_camera_status_check >= 5.0:
+        await controller.camera.check_availability()
+        _last_camera_status_check = now
 
 
 @asynccontextmanager
@@ -34,7 +46,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting ECA Testing Webapp...")
     
     # Check camera availability
-    await controller.camera.check_availability()
+    await refresh_camera_availability(force=True)
     
     yield
     
@@ -91,7 +103,10 @@ async def start_measurement(request: StartMeasurementRequest):
         Session ID and status
     """
     try:
-        session_id = await controller.start_measurement(request.config)
+        session_id = await controller.start_measurement(
+            request.config,
+            control_source=request.control_source,
+        )
         return {
             "success": True,
             "session_id": session_id,
@@ -105,7 +120,7 @@ async def start_measurement(request: StartMeasurementRequest):
 
 
 @app.post("/api/stop_measurement", response_model=StopMeasurementResponse)
-async def stop_measurement():
+async def stop_measurement(control_source: ControlSource = Query(default="api")):
     """
     Stop the current measurement session.
     
@@ -113,7 +128,7 @@ async def stop_measurement():
         Session information and file paths
     """
     try:
-        result = await controller.stop_measurement()
+        result = await controller.stop_measurement(control_source=control_source)
         return result
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -131,7 +146,7 @@ async def get_status():
         System status including instrument connections and measurement state
     """
     try:
-        await controller.camera.check_availability()
+        await refresh_camera_availability()
         status = controller.get_status()
         return status
     except Exception as e:
@@ -227,6 +242,24 @@ async def get_session_data(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/current_session/data")
+async def get_current_session_data(limit: int = Query(default=6000, ge=0, le=50000)):
+    """
+    Return recent in-memory data for the active session.
+
+    This endpoint lets a browser opened mid-run backfill plots for runs that
+    were started by API agents or external scripts.
+    """
+    try:
+        return {
+            "session_id": controller.current_session_id,
+            "data": controller.get_current_session_data(limit=limit),
+        }
+    except Exception as e:
+        logger.error(f"Error getting current session data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # WebSocket Endpoint for Real-time Data Streaming
 # ============================================================================
@@ -266,17 +299,19 @@ async def websocket_endpoint(websocket: WebSocket):
     Streams DMM readings to connected clients.
     """
     await manager.connect(websocket)
+    last_sample_index = None
     
     try:
         while True:
-            # Get current reading
-            reading = controller.get_current_reading()
-            
-            # Send to client
-            await websocket.send_json(reading)
-            
-            # Wait before next reading
-            await asyncio.sleep(0.1)  # 10 Hz update rate
+            if controller.is_measuring:
+                reading = controller.get_current_reading()
+                sample_index = reading.get("sample_index")
+
+                if sample_index is not None and sample_index != last_sample_index:
+                    await websocket.send_json(reading)
+                    last_sample_index = sample_index
+
+            await asyncio.sleep(0.05)
             
     except WebSocketDisconnect:
         manager.disconnect(websocket)

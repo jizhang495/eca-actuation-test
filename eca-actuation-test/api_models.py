@@ -4,6 +4,7 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 DMMAcquisitionMode = Literal["fast", "low_noise"]
+ControlSource = Literal["ui", "api", "agent", "script"]
 
 
 class VoltageStage(BaseModel):
@@ -47,6 +48,10 @@ class MeasurementConfig(BaseModel):
 class StartMeasurementRequest(BaseModel):
     """Request to start a measurement."""
     config: MeasurementConfig
+    control_source: ControlSource = Field(
+        default="api",
+        description="Who initiated the run, used for runtime status and audit display",
+    )
 
 
 class StopMeasurementResponse(BaseModel):
@@ -76,6 +81,15 @@ class AcquisitionStats(BaseModel):
     last_late_by_ms: Optional[float] = None
 
 
+class RuntimeEvent(BaseModel):
+    """Operator/agent visible runtime event."""
+    timestamp: str
+    message: str
+    kind: str = "info"
+    source: Optional[ControlSource] = None
+    elapsed_time: Optional[float] = None
+
+
 class SystemStatus(BaseModel):
     """Overall system status."""
     is_measuring: bool
@@ -86,6 +100,9 @@ class SystemStatus(BaseModel):
     elapsed_time: Optional[float] = None
     mock_mode: bool = False
     acquisition: AcquisitionStats = Field(default_factory=AcquisitionStats)
+    active_config: Optional[MeasurementConfig] = None
+    control_source: Optional[ControlSource] = None
+    events: list[RuntimeEvent] = Field(default_factory=list)
 
 
 class VisaResourceInfo(BaseModel):
