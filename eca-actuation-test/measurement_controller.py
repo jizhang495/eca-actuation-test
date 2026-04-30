@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from typing import Optional
-from datetime import datetime
+import pyvisa
 
 from instruments import KeithleyDMM, IT6412PowerSupply, USB_RLY08C
 from instruments.mock import MockKeithleyDMM, MockIT6412PowerSupply, MockUSB_RLY08C
@@ -71,10 +71,31 @@ class MeasurementController:
         self.is_measuring = False
         self.current_session_id: Optional[str] = None
         self.start_time: Optional[float] = None
+        self._start_monotonic: Optional[float] = None
+        self.latest_reading = {
+            "time": None,
+            "dmm1_voltage": None,
+            "dmm2_voltage": None,
+            "sample_index": None,
+            "read_duration_ms": None,
+            "loop_duration_ms": None,
+            "late_by_ms": None,
+            "overrun": False,
+        }
+        self.acquisition_stats = {
+            "requested_rate_hz": None,
+            "sample_count": 0,
+            "overrun_count": 0,
+            "achieved_rate_hz": None,
+            "last_read_duration_ms": None,
+            "last_loop_duration_ms": None,
+            "last_late_by_ms": None,
+        }
         
         self._measurement_task: Optional[asyncio.Task] = None
         self._voltage_stage_task: Optional[asyncio.Task] = None
         self._relay_stage_tasks: list[asyncio.Task] = []
+        self._relay_lock = asyncio.Lock()
 
     async def start_measurement(self, config: MeasurementConfig) -> str:
         """
@@ -93,6 +114,7 @@ class MeasurementController:
             raise RuntimeError("Measurement already in progress")
 
         logger.info("Starting measurement...")
+        self._validate_config(config)
 
         # Create new session
         self.current_session_id = self.data_logger.create_session(config.test_name)
@@ -107,6 +129,7 @@ class MeasurementController:
         except Exception as e:
             logger.error(f"Failed to connect instruments: {e}")
             self.data_logger.append_log(f"ERROR: Failed to connect instruments: {e}")
+            self._disconnect_instruments()
             raise
 
         # Start camera recording
@@ -122,6 +145,26 @@ class MeasurementController:
         # Start measurement tasks
         self.is_measuring = True
         self.start_time = time.time()
+        self._start_monotonic = time.perf_counter()
+        self.latest_reading = {
+            "time": 0.0,
+            "dmm1_voltage": None,
+            "dmm2_voltage": None,
+            "sample_index": None,
+            "read_duration_ms": None,
+            "loop_duration_ms": None,
+            "late_by_ms": None,
+            "overrun": False,
+        }
+        self.acquisition_stats = {
+            "requested_rate_hz": config.sampling_rate_hz,
+            "sample_count": 0,
+            "overrun_count": 0,
+            "achieved_rate_hz": None,
+            "last_read_duration_ms": None,
+            "last_loop_duration_ms": None,
+            "last_late_by_ms": None,
+        }
 
         # Start DMM acquisition task
         self._measurement_task = asyncio.create_task(
@@ -210,8 +253,31 @@ class MeasurementController:
 
         self.current_session_id = None
         self.start_time = None
+        self._start_monotonic = None
 
         return response
+
+    def _validate_config(self, config: MeasurementConfig):
+        """Fail early when the UI submitted an incomplete hardware schedule."""
+        if config.voltage_stages and not config.power_supply_visa_id:
+            raise RuntimeError("Power supply stages require a selected IT6412 VISA ID")
+
+        if (config.relay_ch1_stages or config.relay_ch2_stages) and not config.relay_port:
+            raise RuntimeError("Relay stages require a selected relay board serial port")
+
+        if config.dmm1_visa_id and config.dmm2_visa_id and config.dmm1_visa_id == config.dmm2_visa_id:
+            raise RuntimeError("DMM1 and DMM2 must use different VISA IDs")
+
+        for index, stage in enumerate(config.voltage_stages, start=1):
+            if stage.end_time <= stage.start_time:
+                raise RuntimeError(f"Power stage {index} end time must be after start time")
+
+        for channel, stages in ((1, config.relay_ch1_stages), (2, config.relay_ch2_stages)):
+            for index, stage in enumerate(stages, start=1):
+                if stage.end_time <= stage.start_time:
+                    raise RuntimeError(
+                        f"Relay CH{channel} stage {index} end time must be after start time"
+                    )
 
     async def _connect_instruments(self, config: MeasurementConfig):
         """Connect all configured instruments."""
@@ -235,12 +301,14 @@ class MeasurementController:
                 success = self.dmm1.connect(config.dmm1_visa_id)
                 if not success:
                     raise RuntimeError(f"Failed to connect DMM1: {config.dmm1_visa_id}")
+                self.dmm1.configure_fast_dc_voltage()
                 logger.info(f"DMM1 connected: {config.dmm1_visa_id}")
 
             if config.dmm2_visa_id:
                 success = self.dmm2.connect(config.dmm2_visa_id)
                 if not success:
                     raise RuntimeError(f"Failed to connect DMM2: {config.dmm2_visa_id}")
+                self.dmm2.configure_fast_dc_voltage()
                 logger.info(f"DMM2 connected: {config.dmm2_visa_id}")
 
             if config.power_supply_visa_id:
@@ -254,6 +322,19 @@ class MeasurementController:
                 if not success:
                     raise RuntimeError(f"Failed to connect relay board: {config.relay_port}")
                 logger.info(f"Relay board connected: {config.relay_port}")
+
+            await self._prime_dmm_reads()
+
+    async def _prime_dmm_reads(self):
+        """Perform one unlogged read so DMM setup latency does not hit sample 0."""
+        prime_tasks = []
+        if self.dmm1.is_connected:
+            prime_tasks.append(asyncio.to_thread(self.dmm1.read_voltage))
+        if self.dmm2.is_connected:
+            prime_tasks.append(asyncio.to_thread(self.dmm2.read_voltage))
+
+        if prime_tasks:
+            await asyncio.gather(*prime_tasks)
 
     def _disconnect_instruments(self):
         """Disconnect all instruments."""
@@ -271,30 +352,94 @@ class MeasurementController:
             sampling_rate_hz: Sampling rate in Hz
         """
         interval = 1.0 / sampling_rate_hz
+        next_sample_at = time.perf_counter()
+        sample_index = 0
         logger.info(f"DMM acquisition started at {sampling_rate_hz} Hz")
 
         try:
             while self.is_measuring:
-                loop_start = time.time()
+                now = time.perf_counter()
+                if now < next_sample_at:
+                    await asyncio.sleep(next_sample_at - now)
+
+                loop_start = time.perf_counter()
+                late_by_ms = max(0.0, (loop_start - next_sample_at) * 1000)
 
                 # Get current elapsed time
-                elapsed = time.time() - self.start_time
+                elapsed = loop_start - self._start_monotonic
 
-                # Read from both DMMs
-                dmm1_voltage = self.dmm1.read_voltage() if self.dmm1.is_connected else None
-                dmm2_voltage = self.dmm2.read_voltage() if self.dmm2.is_connected else None
+                read_start = time.perf_counter()
+                read_tasks = []
+                if self.dmm1.is_connected:
+                    read_tasks.append(asyncio.to_thread(self.dmm1.read_voltage))
+                else:
+                    read_tasks.append(self._none_async())
+
+                if self.dmm2.is_connected:
+                    read_tasks.append(asyncio.to_thread(self.dmm2.read_voltage))
+                else:
+                    read_tasks.append(self._none_async())
+
+                dmm1_voltage, dmm2_voltage = await asyncio.gather(*read_tasks)
+                read_duration_ms = (time.perf_counter() - read_start) * 1000
+                loop_duration_ms = (time.perf_counter() - loop_start) * 1000
+                overrun = loop_duration_ms > interval * 1000
 
                 # Log the reading
-                self.data_logger.log_reading(elapsed, dmm1_voltage, dmm2_voltage)
+                self.data_logger.log_reading(
+                    elapsed,
+                    dmm1_voltage,
+                    dmm2_voltage,
+                    sample_index,
+                    read_duration_ms,
+                    loop_duration_ms,
+                    late_by_ms,
+                    overrun,
+                )
+
+                sample_count = sample_index + 1
+                if overrun:
+                    self.acquisition_stats["overrun_count"] += 1
+
+                runtime = max(0.001, time.perf_counter() - self._start_monotonic)
+                self.acquisition_stats.update({
+                    "sample_count": sample_count,
+                    "achieved_rate_hz": sample_count / runtime,
+                    "last_read_duration_ms": read_duration_ms,
+                    "last_loop_duration_ms": loop_duration_ms,
+                    "last_late_by_ms": late_by_ms,
+                })
+                self.latest_reading = {
+                    "time": elapsed,
+                    "dmm1_voltage": dmm1_voltage,
+                    "dmm2_voltage": dmm2_voltage,
+                    "sample_index": sample_index,
+                    "read_duration_ms": read_duration_ms,
+                    "loop_duration_ms": loop_duration_ms,
+                    "late_by_ms": late_by_ms,
+                    "overrun": overrun,
+                }
+
+                if overrun and sample_count % 10 == 0:
+                    logger.warning(
+                        "DMM acquisition overrun: requested %.3f ms, last loop %.3f ms",
+                        interval * 1000,
+                        loop_duration_ms,
+                    )
 
                 # Sleep for the remainder of the interval
-                loop_duration = time.time() - loop_start
-                sleep_time = max(0, interval - loop_duration)
-                await asyncio.sleep(sleep_time)
+                sample_index += 1
+                next_sample_at += interval
+                if next_sample_at < time.perf_counter():
+                    next_sample_at = time.perf_counter()
 
         except asyncio.CancelledError:
             logger.info("DMM acquisition stopped")
             raise
+
+    async def _none_async(self):
+        """Async placeholder for disconnected DMM channels."""
+        return None
 
     async def _execute_voltage_stages(self, stages: list[VoltageStage]):
         """
@@ -308,25 +453,25 @@ class MeasurementController:
             return
 
         logger.info(f"Executing {len(stages)} voltage stages")
-        self.power_supply.set_output_on()
+        await asyncio.to_thread(self.power_supply.set_output_on)
 
         try:
             for i, stage in enumerate(stages):
                 # Wait until stage start time
                 while True:
-                    elapsed = time.time() - self.start_time
+                    elapsed = time.perf_counter() - self._start_monotonic
                     if elapsed >= stage.start_time:
                         break
                     await asyncio.sleep(0.01)
 
                 # Set voltage
-                self.power_supply.set_voltage(stage.voltage)
+                await asyncio.to_thread(self.power_supply.set_voltage, stage.voltage)
                 logger.info(f"Voltage stage {i+1}: {stage.voltage}V at {elapsed:.2f}s")
                 self.data_logger.append_log(f"Voltage set to {stage.voltage}V")
 
                 # Wait until stage end time
                 while True:
-                    elapsed = time.time() - self.start_time
+                    elapsed = time.perf_counter() - self._start_monotonic
                     if elapsed >= stage.end_time:
                         break
                     await asyncio.sleep(0.01)
@@ -336,8 +481,8 @@ class MeasurementController:
             raise
         finally:
             # Safe shutdown
-            self.power_supply.set_voltage(0.0)
-            self.power_supply.set_output_off()
+            await asyncio.to_thread(self.power_supply.set_voltage, 0.0)
+            await asyncio.to_thread(self.power_supply.set_output_off)
             logger.info("Voltage stages completed")
 
     async def _execute_relay_stages(self, channel: int, stages: list[RelayStage]):
@@ -358,23 +503,22 @@ class MeasurementController:
             for i, stage in enumerate(stages):
                 # Wait until stage start time
                 while True:
-                    elapsed = time.time() - self.start_time
+                    elapsed = time.perf_counter() - self._start_monotonic
                     if elapsed >= stage.start_time:
                         break
                     await asyncio.sleep(0.01)
 
                 # Set relay state
-                if stage.state == "closed":
-                    self.relay_board.set_relay_on(channel)
-                else:
-                    self.relay_board.set_relay_off(channel)
+                success = await self._set_relay_state(channel, stage.state == "closed")
+                if not success:
+                    raise RuntimeError(f"Failed to set relay CH{channel} to {stage.state}")
 
                 logger.info(f"Relay CH{channel} stage {i+1}: {stage.state} at {elapsed:.2f}s")
                 self.data_logger.append_log(f"Relay CH{channel} set to {stage.state}")
 
                 # Wait until stage end time
                 while True:
-                    elapsed = time.time() - self.start_time
+                    elapsed = time.perf_counter() - self._start_monotonic
                     if elapsed >= stage.end_time:
                         break
                     await asyncio.sleep(0.01)
@@ -384,8 +528,15 @@ class MeasurementController:
             raise
         finally:
             # Safe shutdown - open relay
-            self.relay_board.set_relay_off(channel)
+            await self._set_relay_state(channel, False)
             logger.info(f"Relay CH{channel} stages completed")
+
+    async def _set_relay_state(self, channel: int, state: bool) -> bool:
+        """Serialize relay board writes across channel tasks."""
+        async with self._relay_lock:
+            if state:
+                return await asyncio.to_thread(self.relay_board.set_relay_on, channel)
+            return await asyncio.to_thread(self.relay_board.set_relay_off, channel)
 
     def get_status(self) -> dict:
         """
@@ -405,6 +556,7 @@ class MeasurementController:
             "session_id": self.current_session_id,
             "elapsed_time": elapsed,
             "mock_mode": self.use_mock,
+            "acquisition": self.acquisition_stats,
             "instruments": [
                 {
                     "name": "DMM1" + (" (MOCK)" if self.use_mock else ""),
@@ -439,13 +591,70 @@ class MeasurementController:
         if self.use_mock:
             visa_resources = self.dmm1.list_available_devices()
             serial_ports = MockUSB_RLY08C.list_available_ports()
+            visa_details = [
+                {
+                    "resource": resource,
+                    "idn": resource,
+                    "kind": "power_supply" if "POWER" in resource else "dmm",
+                    "label": resource,
+                }
+                for resource in visa_resources
+            ]
         else:
             visa_resources = self.dmm1.list_available_devices()
             serial_ports = USB_RLY08C.list_available_ports()
+            visa_details = [self._identify_visa_resource(resource) for resource in visa_resources]
+
+        dmm_resources = [item["resource"] for item in visa_details if item["kind"] == "dmm"]
+        power_supply_resources = [
+            item["resource"] for item in visa_details if item["kind"] == "power_supply"
+        ]
 
         return {
             "visa_resources": visa_resources,
+            "dmm_resources": dmm_resources or visa_resources,
+            "power_supply_resources": power_supply_resources or visa_resources,
+            "visa_details": visa_details,
             "serial_ports": serial_ports
+        }
+
+    def _identify_visa_resource(self, resource: str) -> dict:
+        """Query *IDN? and classify VISA resources for safer UI selection."""
+        idn = None
+        kind = "unknown"
+
+        try:
+            rm = pyvisa.ResourceManager()
+            instrument = rm.open_resource(resource)
+            instrument.timeout = 1000
+            idn = instrument.query("*IDN?").strip()
+            instrument.close()
+        except Exception as e:
+            logger.warning(f"Failed to identify VISA resource {resource}: {e}")
+
+        upper_idn = (idn or "").upper()
+        upper_resource = resource.upper()
+
+        if "KEITHLEY" in upper_idn or "2110" in upper_idn:
+            kind = "dmm"
+        elif "IT6412" in upper_idn or "ITECH" in upper_idn or "IT-M" in upper_idn:
+            kind = "power_supply"
+        elif "11975::25618" in upper_resource:
+            kind = "power_supply"
+        elif "1510::8464" in upper_resource:
+            kind = "dmm"
+
+        label_prefix = {
+            "dmm": "DMM",
+            "power_supply": "Power",
+        }.get(kind, "VISA")
+        label = f"{label_prefix}: {idn or resource}"
+
+        return {
+            "resource": resource,
+            "idn": idn,
+            "kind": kind,
+            "label": label,
         }
 
     def get_current_reading(self) -> dict:
@@ -455,13 +664,16 @@ class MeasurementController:
         Returns:
             Dictionary with current reading
         """
-        elapsed = None
-        if self.start_time:
-            elapsed = round(time.time() - self.start_time, 1)
+        if self.is_measuring:
+            return self.latest_reading.copy()
 
         return {
-            "time": elapsed,
-            "dmm1_voltage": self.dmm1.read_voltage() if self.dmm1.is_connected else None,
-            "dmm2_voltage": self.dmm2.read_voltage() if self.dmm2.is_connected else None
+            "time": None,
+            "dmm1_voltage": None,
+            "dmm2_voltage": None,
+            "sample_index": None,
+            "read_duration_ms": None,
+            "loop_duration_ms": None,
+            "late_by_ms": None,
+            "overrun": False,
         }
-

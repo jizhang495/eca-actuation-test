@@ -15,6 +15,18 @@ interface DMMReading {
   time: number;
   dmm1_voltage: number | null;
   dmm2_voltage: number | null;
+  sample_index?: number | null;
+  read_duration_ms?: number | null;
+  loop_duration_ms?: number | null;
+  late_by_ms?: number | null;
+  overrun?: boolean;
+}
+
+interface VisaResourceOption {
+  resource: string;
+  label: string;
+  idn?: string | null;
+  kind?: string;
 }
 
 const MAX_DATA_POINTS = 500; // Limit data points shown on graph
@@ -25,9 +37,15 @@ export default function Home() {
   const [cameraStatus, setCameraStatus] = useState({ recording: false, available: false });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [latestTiming, setLatestTiming] = useState<{
+    readDurationMs?: number | null;
+    loopDurationMs?: number | null;
+    overrun?: boolean;
+  }>({});
 
   // State for instruments
-  const [visaResources, setVisaResources] = useState<string[]>([]);
+  const [dmmResources, setDmmResources] = useState<VisaResourceOption[]>([]);
+  const [powerSupplyResources, setPowerSupplyResources] = useState<VisaResourceOption[]>([]);
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
 
   // State for DMM configuration
@@ -51,6 +69,7 @@ export default function Home() {
 
   // WebSocket reference
   const wsRef = useRef<WebSocket | null>(null);
+  const isMeasuringRef = useRef(false);
 
   // Fetch available instruments on mount
   useEffect(() => {
@@ -58,12 +77,47 @@ export default function Home() {
     fetchStatus();
   }, []);
 
+  useEffect(() => {
+    isMeasuringRef.current = isMeasuring;
+  }, [isMeasuring]);
+
   const fetchInstruments = async () => {
     try {
       const response = await fetch("/api/list_instruments");
       const data = await response.json();
-      setVisaResources(data.visa_resources || []);
+
+      const detailMap = new Map<string, VisaResourceOption>(
+        (data.visa_details || []).map((detail: VisaResourceOption) => [
+          detail.resource,
+          {
+            resource: detail.resource,
+            label: detail.label || detail.resource,
+            idn: detail.idn,
+            kind: detail.kind,
+          },
+        ])
+      );
+      const toOptions = (resources: string[]): VisaResourceOption[] =>
+        resources.map((resource) => detailMap.get(resource) || { resource, label: resource });
+      const nextDmmResources = toOptions(data.dmm_resources || data.visa_resources || []);
+      const nextPowerSupplyResources = toOptions(
+        data.power_supply_resources || data.visa_resources || []
+      );
+
+      setDmmResources(nextDmmResources);
+      setPowerSupplyResources(nextPowerSupplyResources);
       setSerialPorts(data.serial_ports || []);
+      setDmm1Visa((value) =>
+        value && !nextDmmResources.some((option) => option.resource === value) ? "" : value
+      );
+      setDmm2Visa((value) =>
+        value && !nextDmmResources.some((option) => option.resource === value) ? "" : value
+      );
+      setPowerSupplyVisa((value) =>
+        value && !nextPowerSupplyResources.some((option) => option.resource === value)
+          ? ""
+          : value
+      );
     } catch (error) {
       console.error("Failed to fetch instruments:", error);
     }
@@ -123,6 +177,11 @@ export default function Home() {
           }
 
           setElapsedTime(reading.time);
+          setLatestTiming({
+            readDurationMs: reading.read_duration_ms,
+            loopDurationMs: reading.loop_duration_ms,
+            overrun: reading.overrun,
+          });
         }
       } catch (error) {
         console.error("Error parsing WebSocket message:", error);
@@ -136,13 +195,13 @@ export default function Home() {
     ws.onclose = () => {
       console.log("WebSocket disconnected");
       // Reconnect if measuring
-      if (isMeasuring) {
+      if (isMeasuringRef.current) {
         setTimeout(connectWebSocket, 1000);
       }
     };
 
     wsRef.current = ws;
-  }, [isMeasuring]);
+  }, []);
 
   const disconnectWebSocket = useCallback(() => {
     if (wsRef.current) {
@@ -166,10 +225,30 @@ export default function Home() {
 
   const handleStartMeasurement = async () => {
     try {
+      if (dmm1Visa && dmm2Visa && dmm1Visa === dmm2Visa) {
+        alert("DMM1 and DMM2 must use different VISA IDs.");
+        return;
+      }
+
+      if (voltageStages.length > 0 && !powerSupplyVisa) {
+        alert("Add a power supply VISA ID before using power supply stages.");
+        return;
+      }
+
+      if ((relayCh1Stages.length > 0 || relayCh2Stages.length > 0) && !relayPort) {
+        alert("Add a relay board serial port before using relay stages.");
+        return;
+      }
+
       const normalizedVoltageStages: Array<{ start_time: number; end_time: number; voltage: number }> = [];
 
       for (let i = 0; i < voltageStages.length; i++) {
         const stage = voltageStages[i];
+        if (stage.end_time <= stage.start_time) {
+          alert(`Power stage ${i + 1}: end time must be after start time.`);
+          return;
+        }
+
         const expression = stage.voltageExpression ?? String(stage.voltage);
         const evaluation = evaluateExpression(expression, { t: stage.start_time });
 
@@ -188,6 +267,19 @@ export default function Home() {
       if (normalizedVoltageStages.length !== voltageStages.length) {
         alert("Failed to normalize voltage stages.");
         return;
+      }
+
+      for (const [channel, stages] of [
+        [1, relayCh1Stages],
+        [2, relayCh2Stages],
+      ] as const) {
+        for (let i = 0; i < stages.length; i++) {
+          const stage = stages[i];
+          if (stage.end_time <= stage.start_time) {
+            alert(`Relay CH${channel} stage ${i + 1}: end time must be after start time.`);
+            return;
+          }
+        }
       }
 
       setVoltageStages((prev) =>
@@ -230,6 +322,7 @@ export default function Home() {
       setDmm1Data([]);
       setDmm2Data([]);
       setElapsedTime(0);
+      setLatestTiming({});
 
       console.log("Measurement started:", data);
     } catch (error) {
@@ -291,7 +384,7 @@ export default function Home() {
             {/* Elapsed Time */}
             {isMeasuring && (
               <div className="text-sm font-mono sm:justify-self-end xl:justify-self-auto">
-                {elapsedTime.toFixed(1)} s
+                {elapsedTime.toFixed(3)} s
               </div>
             )}
 
@@ -327,14 +420,14 @@ export default function Home() {
             <DMMGraph
               title="DMM 1"
               data={dmm1Data}
-              visaResources={visaResources}
+              visaResources={dmmResources}
               selectedVisa={dmm1Visa}
               onVisaChange={setDmm1Visa}
             />
             <DMMGraph
               title="DMM 2"
               data={dmm2Data}
-              visaResources={visaResources}
+              visaResources={dmmResources}
               selectedVisa={dmm2Visa}
               onVisaChange={setDmm2Visa}
             />
@@ -375,7 +468,7 @@ export default function Home() {
                       onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
                       disabled={isMeasuring}
                       min={1}
-                      max={100}
+                      max={300}
                       className="h-9"
                     />
                   </div>
@@ -386,7 +479,7 @@ export default function Home() {
             <VoltageStageConfigurator
               stages={voltageStages}
               onStagesChange={setVoltageStages}
-              visaResources={visaResources}
+              visaResources={powerSupplyResources}
               selectedVisa={powerSupplyVisa}
               onVisaChange={setPowerSupplyVisa}
               disabled={isMeasuring}
@@ -421,6 +514,13 @@ export default function Home() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm font-mono break-all">{sessionId}</p>
+                  {latestTiming.loopDurationMs !== undefined && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Read {latestTiming.readDurationMs?.toFixed(1)} ms · Loop{" "}
+                      {latestTiming.loopDurationMs?.toFixed(1)} ms
+                      {latestTiming.overrun ? " · Overrun" : ""}
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             )}

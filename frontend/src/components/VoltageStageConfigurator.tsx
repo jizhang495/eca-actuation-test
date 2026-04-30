@@ -27,7 +27,7 @@ export interface VoltageStage {
 interface VoltageStageConfiguratorProps {
   stages: VoltageStage[];
   onStagesChange: (stages: VoltageStage[]) => void;
-  visaResources: string[];
+  visaResources: Array<{ resource: string; label: string }>;
   selectedVisa: string;
   onVisaChange: (visa: string) => void;
   disabled?: boolean;
@@ -129,11 +129,17 @@ export function VoltageStageConfigurator({
               <SelectValue placeholder="Select power supply" />
             </SelectTrigger>
             <SelectContent>
-              {visaResources.map((visa) => (
-                <SelectItem key={visa} value={visa}>
-                  {visa}
+              {visaResources.length === 0 ? (
+                <SelectItem value="none" disabled>
+                  No power supplies found
                 </SelectItem>
-              ))}
+              ) : (
+                visaResources.map((visa) => (
+                  <SelectItem key={visa.resource} value={visa.resource}>
+                    {visa.label}
+                  </SelectItem>
+                ))
+              )}
             </SelectContent>
           </Select>
         </div>

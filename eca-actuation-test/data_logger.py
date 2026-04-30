@@ -7,14 +7,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 import pandas as pd
-import asyncio
-from queue import Queue
+from collections import deque
+from queue import Empty, Queue
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = REPO_ROOT / "user-data" / "sessions"
+MAX_SESSION_DATA_POINTS = 10000
+CSV_FLUSH_EVERY_ROWS = 100
+CSV_FLUSH_INTERVAL_SECONDS = 0.5
 
 
 def _resolve_data_dir(base_data_dir: str | Path | None = None) -> Path:
@@ -58,7 +62,7 @@ class DataLogger:
         self._logging_active = False
         self._writer_thread: Optional[threading.Thread] = None
         
-        self.session_data = []
+        self.session_data = deque(maxlen=MAX_SESSION_DATA_POINTS)
 
     def create_session(self, test_name: str = "test") -> str:
         """
@@ -82,9 +86,12 @@ class DataLogger:
         
         # Initialize CSV with header
         with open(self.csv_file, 'w') as f:
-            f.write("time,dmm1_voltage,dmm2_voltage\n")
+            f.write(
+                "time,dmm1_voltage,dmm2_voltage,sample_index,"
+                "read_duration_ms,loop_duration_ms,late_by_ms,overrun\n"
+            )
         
-        self.session_data = []
+        self.session_data = deque(maxlen=MAX_SESSION_DATA_POINTS)
         
         logger.info(f"Created new session: {session_id}")
         return session_id
@@ -107,7 +114,17 @@ class DataLogger:
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
 
-    def log_reading(self, time_s: float, dmm1_voltage: Optional[float], dmm2_voltage: Optional[float]):
+    def log_reading(
+        self,
+        time_s: float,
+        dmm1_voltage: Optional[float],
+        dmm2_voltage: Optional[float],
+        sample_index: int,
+        read_duration_ms: float,
+        loop_duration_ms: float,
+        late_by_ms: float,
+        overrun: bool,
+    ):
         """
         Log a reading to the data queue.
 
@@ -115,6 +132,11 @@ class DataLogger:
             time_s: Time in seconds since start
             dmm1_voltage: DMM1 voltage reading
             dmm2_voltage: DMM2 voltage reading
+            sample_index: Zero-based acquired sample index
+            read_duration_ms: Time spent reading instruments
+            loop_duration_ms: Total acquisition loop duration
+            late_by_ms: How late this sample started relative to schedule
+            overrun: True when loop duration exceeded requested interval
         """
         if not self._logging_active:
             return
@@ -122,7 +144,12 @@ class DataLogger:
         data_point = {
             'time': time_s,
             'dmm1_voltage': dmm1_voltage if dmm1_voltage is not None else 0.0,
-            'dmm2_voltage': dmm2_voltage if dmm2_voltage is not None else 0.0
+            'dmm2_voltage': dmm2_voltage if dmm2_voltage is not None else 0.0,
+            'sample_index': sample_index,
+            'read_duration_ms': read_duration_ms,
+            'loop_duration_ms': loop_duration_ms,
+            'late_by_ms': late_by_ms,
+            'overrun': overrun,
         }
         
         self._data_queue.put(data_point)
@@ -147,19 +174,43 @@ class DataLogger:
         """Background thread for writing data to CSV."""
         try:
             with open(self.csv_file, 'a') as f:
+                rows_since_flush = 0
+                last_flush = time.monotonic()
+
                 while self._logging_active or not self._data_queue.empty():
                     try:
-                        # Get data from queue with timeout
                         data_point = self._data_queue.get(timeout=0.1)
                         
-                        # Write to CSV
-                        line = f"{data_point['time']:.4f},{data_point['dmm1_voltage']:.6f},{data_point['dmm2_voltage']:.6f}\n"
+                        line = (
+                            f"{data_point['time']:.6f},"
+                            f"{data_point['dmm1_voltage']:.9f},"
+                            f"{data_point['dmm2_voltage']:.9f},"
+                            f"{data_point['sample_index']},"
+                            f"{data_point['read_duration_ms']:.3f},"
+                            f"{data_point['loop_duration_ms']:.3f},"
+                            f"{data_point['late_by_ms']:.3f},"
+                            f"{int(data_point['overrun'])}\n"
+                        )
                         f.write(line)
-                        f.flush()  # Ensure data is written to disk
+                        rows_since_flush += 1
+
+                        now = time.monotonic()
+                        if (
+                            rows_since_flush >= CSV_FLUSH_EVERY_ROWS
+                            or now - last_flush >= CSV_FLUSH_INTERVAL_SECONDS
+                        ):
+                            f.flush()
+                            rows_since_flush = 0
+                            last_flush = now
                         
-                    except:
-                        # Queue empty or timeout
+                    except Empty:
+                        if rows_since_flush:
+                            f.flush()
+                            rows_since_flush = 0
+                            last_flush = time.monotonic()
                         continue
+
+                f.flush()
                         
         except Exception as e:
             logger.error(f"Error in writer loop: {e}")
@@ -201,7 +252,7 @@ class DataLogger:
         Returns:
             List of data points
         """
-        return self.session_data.copy()
+        return list(self.session_data)
 
     def get_session_dataframe(self) -> Optional[pd.DataFrame]:
         """
@@ -213,7 +264,7 @@ class DataLogger:
         if not self.session_data:
             return None
 
-        return pd.DataFrame(self.session_data)
+        return pd.DataFrame(list(self.session_data))
 
     def list_sessions(self) -> list[str]:
         """

@@ -115,6 +115,35 @@ class KeithleyDMM:
         except Exception as e:
             logger.error(f"Failed to configure DMM: {e}")
 
+    def configure_fast_dc_voltage(self, range_val: float = 10.0, nplc: float = 0.02):
+        """
+        Configure the DMM for faster polling at lower integration time.
+
+        This trades some noise rejection and accuracy for higher time resolution. The
+        measurement loop still records actual timestamps and loop durations, so any
+        instrument-side limit remains visible in the saved CSV.
+        """
+        if not self._is_connected or not self.instrument:
+            logger.warning("DMM not connected")
+            return
+
+        commands = [
+            f"CONF:VOLT:DC {range_val}",
+            f"VOLT:DC:RANG {range_val}",
+            f"VOLT:DC:NPLC {nplc}",
+            "ZERO:AUTO OFF",
+            "TRIG:SOUR IMM",
+            "SAMP:COUN 1",
+        ]
+
+        for command in commands:
+            try:
+                self.instrument.write(command)
+            except Exception as e:
+                logger.warning(f"DMM fast config command failed ({command}): {e}")
+
+        logger.info(f"DMM configured for faster DC voltage reads, range: {range_val}V, NPLC: {nplc}")
+
     @property
     def is_connected(self) -> bool:
         """Check if DMM is connected."""

@@ -51,6 +51,17 @@ class InstrumentStatus(BaseModel):
     address: Optional[str] = None
 
 
+class AcquisitionStats(BaseModel):
+    """Runtime acquisition timing statistics."""
+    requested_rate_hz: Optional[float] = None
+    sample_count: int = 0
+    overrun_count: int = 0
+    achieved_rate_hz: Optional[float] = None
+    last_read_duration_ms: Optional[float] = None
+    last_loop_duration_ms: Optional[float] = None
+    last_late_by_ms: Optional[float] = None
+
+
 class SystemStatus(BaseModel):
     """Overall system status."""
     is_measuring: bool
@@ -59,11 +70,24 @@ class SystemStatus(BaseModel):
     session_id: Optional[str] = None
     instruments: list[InstrumentStatus]
     elapsed_time: Optional[float] = None
+    mock_mode: bool = False
+    acquisition: AcquisitionStats = Field(default_factory=AcquisitionStats)
+
+
+class VisaResourceInfo(BaseModel):
+    """Detected VISA resource metadata."""
+    resource: str
+    idn: Optional[str] = None
+    kind: str = "unknown"
+    label: str
 
 
 class InstrumentListResponse(BaseModel):
     """List of available instruments."""
     visa_resources: list[str]
+    dmm_resources: list[str] = Field(default_factory=list)
+    power_supply_resources: list[str] = Field(default_factory=list)
+    visa_details: list[VisaResourceInfo] = Field(default_factory=list)
     serial_ports: list[str]
 
 
@@ -72,6 +96,11 @@ class DMMReading(BaseModel):
     time: float
     dmm1_voltage: Optional[float]
     dmm2_voltage: Optional[float]
+    sample_index: Optional[int] = None
+    read_duration_ms: Optional[float] = None
+    loop_duration_ms: Optional[float] = None
+    late_by_ms: Optional[float] = None
+    overrun: bool = False
 
 
 class SessionInfo(BaseModel):
@@ -80,4 +109,3 @@ class SessionInfo(BaseModel):
     path: str
     files: list[dict]
     config: Optional[dict] = None
-

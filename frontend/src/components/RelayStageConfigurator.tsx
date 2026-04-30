@@ -91,11 +91,17 @@ export function RelayStageConfigurator({
                 <SelectValue placeholder="Select relay port" />
               </SelectTrigger>
               <SelectContent>
-                {serialPorts.map((port) => (
-                  <SelectItem key={port} value={port}>
-                    {port}
+                {serialPorts.length === 0 ? (
+                  <SelectItem value="none" disabled>
+                    No relay ports found
                   </SelectItem>
-                ))}
+                ) : (
+                  serialPorts.map((port) => (
+                    <SelectItem key={port} value={port}>
+                      {port}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>

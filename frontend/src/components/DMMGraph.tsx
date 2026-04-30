@@ -23,7 +23,7 @@ import { Label } from "@/components/ui/label";
 interface DMMGraphProps {
   title: string;
   data: Array<{ time: number; voltage: number }>;
-  visaResources: string[];
+  visaResources: Array<{ resource: string; label: string }>;
   selectedVisa: string;
   onVisaChange: (value: string) => void;
 }
@@ -255,8 +255,8 @@ export function DMMGraph({
                   </SelectItem>
                 ) : (
                   visaResources.map((visa) => (
-                    <SelectItem key={visa} value={visa}>
-                      {visa}
+                    <SelectItem key={visa.resource} value={visa.resource}>
+                      {visa.label}
                     </SelectItem>
                   ))
                 )}

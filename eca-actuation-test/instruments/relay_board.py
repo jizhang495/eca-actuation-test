@@ -14,9 +14,13 @@ class USB_RLY08C:
 
     # Command bytes
     CMD_GET_SERIAL = 0x38
-    CMD_SET_RELAY = 0x5A
+    CMD_GET_SOFTWARE_VERSION = 0x5A
     CMD_GET_RELAY_STATE = 0x5B
-    CMD_SET_PORT_DIR = 0x5C
+    CMD_SET_RELAY_STATES = 0x5C
+    CMD_ALL_RELAYS_ON = 0x64
+    CMD_RELAY_ON_BASE = 0x65
+    CMD_ALL_RELAYS_OFF = 0x6E
+    CMD_RELAY_OFF_BASE = 0x6F
 
     def __init__(self, port: Optional[str] = None, baudrate: int = 9600):
         """
@@ -72,6 +76,8 @@ class USB_RLY08C:
                 write_timeout=1.0
             )
             time.sleep(0.1)  # Allow time for connection to stabilize
+            self.serial.reset_input_buffer()
+            self.serial.reset_output_buffer()
             self._is_connected = True
             
             # Test connection by getting relay state
@@ -131,9 +137,19 @@ class USB_RLY08C:
             else:
                 self._relay_states &= ~(1 << bit_pos)  # Clear bit
 
-            # Send command
-            self.serial.write(bytes([self.CMD_SET_RELAY, self._relay_states]))
-            time.sleep(0.01)  # Small delay for relay to switch
+            self.serial.write(bytes([self.CMD_SET_RELAY_STATES, self._relay_states]))
+            self.serial.flush()
+            time.sleep(0.02)  # Small delay for relay to switch
+
+            confirmed_state = self.get_relay_states()
+            if confirmed_state is not None and confirmed_state != self._relay_states:
+                logger.error(
+                    "Relay state mismatch after setting relay %s: expected %s, got %s",
+                    channel,
+                    self._relay_states,
+                    confirmed_state,
+                )
+                return False
             
             logger.debug(f"Relay {channel} set to {'ON' if state else 'OFF'}")
             return True
@@ -158,7 +174,10 @@ class USB_RLY08C:
 
         try:
             self._relay_states = 0x00
-            self.serial.write(bytes([self.CMD_SET_RELAY, self._relay_states]))
+            self.serial.reset_input_buffer()
+            self.serial.write(bytes([self.CMD_ALL_RELAYS_OFF]))
+            self.serial.flush()
+            time.sleep(0.02)
             logger.info("All relays turned OFF")
             return True
         except Exception as e:
@@ -177,14 +196,13 @@ class USB_RLY08C:
             return None
 
         try:
+            self.serial.reset_input_buffer()
             self.serial.write(bytes([self.CMD_GET_RELAY_STATE]))
-            time.sleep(0.05)  # Wait for response
-            
-            if self.serial.in_waiting > 0:
-                response = self.serial.read(1)
-                if response:
-                    self._relay_states = response[0]
-                    return self._relay_states
+            self.serial.flush()
+            response = self.serial.read(1)
+            if response:
+                self._relay_states = response[0]
+                return self._relay_states
             
             return None
             
