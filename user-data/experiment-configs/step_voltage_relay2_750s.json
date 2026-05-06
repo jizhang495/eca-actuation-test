@@ -1,0 +1,97 @@
+{
+  "test_name": "step_voltage_relay2_750s",
+  "dmm1_visa_id": "USB0::1510::8464::8017058::0::INSTR",
+  "dmm2_visa_id": "USB0::1510::8464::8016020::0::INSTR",
+  "power_supply_visa_id": "USB0::11975::25618::800624011767410027::0::INSTR",
+  "relay_port": "/dev/ttyACM0",
+  "voltage_stages": [
+    {
+      "start_time": 0.0,
+      "end_time": 25.0,
+      "voltage": 0.0
+    },
+    {
+      "start_time": 25.0,
+      "end_time": 125.0,
+      "voltage": 0.2
+    },
+    {
+      "start_time": 125.0,
+      "end_time": 225.0,
+      "voltage": 0.4
+    },
+    {
+      "start_time": 225.0,
+      "end_time": 325.0,
+      "voltage": 0.6
+    },
+    {
+      "start_time": 325.0,
+      "end_time": 425.0,
+      "voltage": 0.8
+    },
+    {
+      "start_time": 425.0,
+      "end_time": 525.0,
+      "voltage": 0.6
+    },
+    {
+      "start_time": 525.0,
+      "end_time": 625.0,
+      "voltage": 0.4
+    },
+    {
+      "start_time": 625.0,
+      "end_time": 725.0,
+      "voltage": 0.2
+    },
+    {
+      "start_time": 725.0,
+      "end_time": 750.0,
+      "voltage": 0.0
+    }
+  ],
+  "relay_ch1_stages": [],
+  "relay_ch2_stages": [
+    {
+      "start_time": 50.0,
+      "end_time": 100.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 150.0,
+      "end_time": 200.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 250.0,
+      "end_time": 300.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 350.0,
+      "end_time": 400.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 450.0,
+      "end_time": 500.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 550.0,
+      "end_time": 600.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 650.0,
+      "end_time": 700.0,
+      "state": "closed"
+    }
+  ],
+  "sampling_rate_hz": 10.0,
+  "dmm_acquisition_mode": "low_noise",
+  "stop_after_seconds": 750.0,
+  "record_camera": true,
+  "camera_ready_delay_seconds": 2.0
+}

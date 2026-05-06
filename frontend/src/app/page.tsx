@@ -15,7 +15,17 @@ import {
 import { DMMGraph } from "@/components/DMMGraph";
 import { VoltageStageConfigurator, VoltageStage } from "@/components/VoltageStageConfigurator";
 import { RelayStageConfigurator, RelayStage } from "@/components/RelayStageConfigurator";
-import { Loader2, Play, Square, Video, VideoOff, AlertCircle } from "lucide-react";
+import {
+  Download,
+  Loader2,
+  Play,
+  Square,
+  Video,
+  VideoOff,
+  AlertCircle,
+  Save,
+  Upload,
+} from "lucide-react";
 import { evaluateExpression } from "@/lib/expression";
 
 interface DMMReading {
@@ -43,6 +53,7 @@ interface MeasurementConfig {
   relay_ch2_stages: RelayStage[];
   sampling_rate_hz: number;
   dmm_acquisition_mode?: DmmAcquisitionMode;
+  stop_after_seconds?: number | null;
   record_camera: boolean;
   camera_ready_delay_seconds: number;
 }
@@ -80,13 +91,146 @@ interface VisaResourceOption {
   kind?: string;
 }
 
+interface CameraDownloadStatus {
+  is_running: boolean;
+  started_at?: string | null;
+  finished_at?: string | null;
+  success?: boolean | null;
+  message: string;
+  session_dir?: string | null;
+  camera_file?: string | null;
+  destination?: string | null;
+  metadata_path?: string | null;
+  source_size_bytes?: number | null;
+  returncode?: number | null;
+}
+
+interface SaveExperimentConfigResponse {
+  success: boolean;
+  file_name: string;
+  path: string;
+  message: string;
+}
+
 const MAX_DATA_POINTS = 6000; // WebSocket updates at 10 Hz, so this keeps about 10 minutes visible.
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const readOptionalString = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+
+const readNumber = (value: unknown, fallback: number, fieldName: string): number => {
+  const numberValue =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : fallback;
+
+  if (!Number.isFinite(numberValue)) {
+    throw new Error(`${fieldName} must be a number.`);
+  }
+
+  return numberValue;
+};
+
+const readBoolean = (value: unknown, fallback: boolean, fieldName: string): boolean => {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+
+  throw new Error(`${fieldName} must be true or false.`);
+};
+
+const normalizeVoltageStages = (
+  value: unknown
+): MeasurementConfig["voltage_stages"] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("voltage_stages must be an array.");
+
+  return value.map((stage, index) => {
+    if (!isRecord(stage)) {
+      throw new Error(`voltage_stages[${index}] must be an object.`);
+    }
+
+    return {
+      start_time: readNumber(stage.start_time, 0, `voltage_stages[${index}].start_time`),
+      end_time: readNumber(stage.end_time, 0, `voltage_stages[${index}].end_time`),
+      voltage: readNumber(stage.voltage, 0, `voltage_stages[${index}].voltage`),
+    };
+  });
+};
+
+const normalizeRelayStages = (value: unknown, fieldName: string): RelayStage[] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error(`${fieldName} must be an array.`);
+
+  return value.map((stage, index) => {
+    if (!isRecord(stage)) {
+      throw new Error(`${fieldName}[${index}] must be an object.`);
+    }
+
+    if (stage.state !== "open" && stage.state !== "closed") {
+      throw new Error(`${fieldName}[${index}].state must be open or closed.`);
+    }
+
+    return {
+      start_time: readNumber(stage.start_time, 0, `${fieldName}[${index}].start_time`),
+      end_time: readNumber(stage.end_time, 0, `${fieldName}[${index}].end_time`),
+      state: stage.state,
+    };
+  });
+};
+
+const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
+  const configValue = isRecord(value) && "config" in value ? value.config : value;
+  if (!isRecord(configValue)) {
+    throw new Error("JSON file must contain a measurement config object.");
+  }
+
+  const dmmAcquisitionMode =
+    configValue.dmm_acquisition_mode === "low_noise" ? "low_noise" : "fast";
+  const stopAfterSeconds =
+    configValue.stop_after_seconds === undefined || configValue.stop_after_seconds === null
+      ? null
+      : readNumber(configValue.stop_after_seconds, 0, "stop_after_seconds");
+
+  return {
+    test_name:
+      typeof configValue.test_name === "string" && configValue.test_name.trim()
+        ? configValue.test_name
+        : "test",
+    dmm1_visa_id: readOptionalString(configValue.dmm1_visa_id),
+    dmm2_visa_id: readOptionalString(configValue.dmm2_visa_id),
+    power_supply_visa_id: readOptionalString(configValue.power_supply_visa_id),
+    relay_port: readOptionalString(configValue.relay_port),
+    voltage_stages: normalizeVoltageStages(configValue.voltage_stages),
+    relay_ch1_stages: normalizeRelayStages(configValue.relay_ch1_stages, "relay_ch1_stages"),
+    relay_ch2_stages: normalizeRelayStages(configValue.relay_ch2_stages, "relay_ch2_stages"),
+    sampling_rate_hz: readNumber(configValue.sampling_rate_hz, 10, "sampling_rate_hz"),
+    dmm_acquisition_mode: dmmAcquisitionMode,
+    stop_after_seconds: stopAfterSeconds,
+    record_camera: readBoolean(configValue.record_camera, false, "record_camera"),
+    camera_ready_delay_seconds: readNumber(
+      configValue.camera_ready_delay_seconds,
+      1,
+      "camera_ready_delay_seconds"
+    ),
+  };
+};
 
 export default function Home() {
   // State for measurements
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [cameraStatus, setCameraStatus] = useState({ recording: false, available: false });
+  const [cameraDownloadStatus, setCameraDownloadStatus] =
+    useState<CameraDownloadStatus | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [controlSource, setControlSource] = useState<ControlSource | null>(null);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
@@ -122,13 +266,19 @@ export default function Home() {
   const [samplingRate, setSamplingRate] = useState(10);
   const [dmmAcquisitionMode, setDmmAcquisitionMode] =
     useState<DmmAcquisitionMode>("fast");
+  const [stopAtEnabled, setStopAtEnabled] = useState(false);
+  const [stopAfterSeconds, setStopAfterSeconds] = useState(750);
   const [recordCamera, setRecordCamera] = useState(false);
   const [cameraReadyDelaySeconds, setCameraReadyDelaySeconds] = useState(1);
+  const [loadedConfigName, setLoadedConfigName] = useState<string | null>(null);
+  const [configLoadError, setConfigLoadError] = useState<string | null>(null);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   // WebSocket reference
   const wsRef = useRef<WebSocket | null>(null);
   const isMeasuringRef = useRef(false);
   const syncedSessionRef = useRef<string | null>(null);
+  const configFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     isMeasuringRef.current = isMeasuring;
@@ -193,8 +343,77 @@ export default function Home() {
     setRelayCh2Stages(config.relay_ch2_stages || []);
     setSamplingRate(config.sampling_rate_hz || 10);
     setDmmAcquisitionMode(config.dmm_acquisition_mode || "fast");
+    setStopAtEnabled(
+      typeof config.stop_after_seconds === "number" &&
+        Number.isFinite(config.stop_after_seconds)
+    );
+    setStopAfterSeconds(config.stop_after_seconds ?? 750);
     setRecordCamera(Boolean(config.record_camera));
     setCameraReadyDelaySeconds(config.camera_ready_delay_seconds ?? 0);
+  }, []);
+
+  const handleConfigFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file || isMeasuringRef.current) return;
+
+      try {
+        const parsed = JSON.parse(await file.text());
+        const config = normalizeLoadedConfig(parsed);
+        applyMeasurementConfig(config);
+        setLoadedConfigName(file.name);
+        setConfigLoadError(null);
+      } catch (error) {
+        setLoadedConfigName(null);
+        setConfigLoadError(
+          error instanceof Error ? error.message : "Failed to load config file."
+        );
+      }
+    },
+    [applyMeasurementConfig]
+  );
+
+  const fetchCameraDownloadStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/download_latest_camera_recording/status");
+      if (!response.ok) return;
+      const data: CameraDownloadStatus = await response.json();
+      setCameraDownloadStatus(data);
+    } catch (error) {
+      console.error("Failed to fetch camera download status:", error);
+    }
+  }, []);
+
+  const handleDownloadLatestCameraRecording = useCallback(async () => {
+    try {
+      const response = await fetch("/api/download_latest_camera_recording", {
+        method: "POST",
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        const message = data.detail || "Failed to start camera recording download.";
+        setCameraDownloadStatus({
+          is_running: false,
+          success: false,
+          message,
+        });
+        alert(message);
+        return;
+      }
+
+      setCameraDownloadStatus(data);
+    } catch (error) {
+      const message = "Failed to start camera recording download.";
+      setCameraDownloadStatus({
+        is_running: false,
+        success: false,
+        message,
+      });
+      console.error("Error starting camera recording download:", error);
+      alert(message);
+    }
   }, []);
 
   const replaceLiveData = useCallback((readings: DMMReading[]) => {
@@ -299,10 +518,18 @@ export default function Home() {
   useEffect(() => {
     fetchInstruments();
     fetchStatus();
+    fetchCameraDownloadStatus();
 
     const statusTimer = window.setInterval(fetchStatus, 1000);
     return () => window.clearInterval(statusTimer);
-  }, [fetchInstruments, fetchStatus]);
+  }, [fetchInstruments, fetchStatus, fetchCameraDownloadStatus]);
+
+  useEffect(() => {
+    if (!cameraDownloadStatus?.is_running) return;
+
+    const downloadTimer = window.setInterval(fetchCameraDownloadStatus, 2000);
+    return () => window.clearInterval(downloadTimer);
+  }, [cameraDownloadStatus?.is_running, fetchCameraDownloadStatus]);
 
   // WebSocket connection
   const connectWebSocket = useCallback(() => {
@@ -357,89 +584,110 @@ export default function Home() {
     };
   }, [isMeasuring, connectWebSocket, disconnectWebSocket]);
 
+  const buildCurrentMeasurementConfig = useCallback((): MeasurementConfig | null => {
+    if (dmm1Visa && dmm2Visa && dmm1Visa === dmm2Visa) {
+      alert("DMM1 and DMM2 must use different VISA IDs.");
+      return null;
+    }
+
+    if (voltageStages.length > 0 && !powerSupplyVisa) {
+      alert("Add a power supply VISA ID before using power supply stages.");
+      return null;
+    }
+
+    if ((relayCh1Stages.length > 0 || relayCh2Stages.length > 0) && !relayPort) {
+      alert("Add a relay board serial port before using relay stages.");
+      return null;
+    }
+
+    if (stopAtEnabled && (!Number.isFinite(stopAfterSeconds) || stopAfterSeconds <= 0)) {
+      alert("Stop time must be greater than 0 seconds.");
+      return null;
+    }
+
+    const normalizedVoltageStages: MeasurementConfig["voltage_stages"] = [];
+
+    for (let i = 0; i < voltageStages.length; i++) {
+      const stage = voltageStages[i];
+      if (stage.end_time <= stage.start_time) {
+        alert(`Power stage ${i + 1}: end time must be after start time.`);
+        return null;
+      }
+
+      const expression = stage.voltageExpression ?? String(stage.voltage);
+      const evaluation = evaluateExpression(expression, { t: stage.start_time });
+
+      if (evaluation.error || evaluation.value === null) {
+        alert(`Power stage ${i + 1}: ${evaluation.error ?? "Invalid expression"}`);
+        return null;
+      }
+
+      normalizedVoltageStages.push({
+        start_time: stage.start_time,
+        end_time: stage.end_time,
+        voltage: evaluation.value,
+      });
+    }
+
+    for (const [channel, stages] of [
+      [1, relayCh1Stages],
+      [2, relayCh2Stages],
+    ] as const) {
+      for (let i = 0; i < stages.length; i++) {
+        const stage = stages[i];
+        if (stage.end_time <= stage.start_time) {
+          alert(`Relay CH${channel} stage ${i + 1}: end time must be after start time.`);
+          return null;
+        }
+      }
+    }
+
+    setVoltageStages((prev) =>
+      prev.map((stage, index) => ({
+        ...stage,
+        voltage: normalizedVoltageStages[index]?.voltage ?? stage.voltage,
+        voltageExpressionError: undefined,
+      }))
+    );
+
+    return {
+      test_name: testName,
+      dmm1_visa_id: dmm1Visa || null,
+      dmm2_visa_id: dmm2Visa || null,
+      power_supply_visa_id: powerSupplyVisa || null,
+      relay_port: relayPort || null,
+      voltage_stages: normalizedVoltageStages,
+      relay_ch1_stages: relayCh1Stages,
+      relay_ch2_stages: relayCh2Stages,
+      sampling_rate_hz: samplingRate,
+      dmm_acquisition_mode: dmmAcquisitionMode,
+      stop_after_seconds: stopAtEnabled ? stopAfterSeconds : null,
+      record_camera: recordCamera,
+      camera_ready_delay_seconds: recordCamera ? cameraReadyDelaySeconds : 0,
+    };
+  }, [
+    cameraReadyDelaySeconds,
+    dmm1Visa,
+    dmm2Visa,
+    dmmAcquisitionMode,
+    powerSupplyVisa,
+    recordCamera,
+    relayCh1Stages,
+    relayCh2Stages,
+    relayPort,
+    samplingRate,
+    stopAfterSeconds,
+    stopAtEnabled,
+    testName,
+    voltageStages,
+  ]);
+
   const handleStartMeasurement = async () => {
     try {
-      if (dmm1Visa && dmm2Visa && dmm1Visa === dmm2Visa) {
-        alert("DMM1 and DMM2 must use different VISA IDs.");
-        return;
-      }
-
-      if (voltageStages.length > 0 && !powerSupplyVisa) {
-        alert("Add a power supply VISA ID before using power supply stages.");
-        return;
-      }
-
-      if ((relayCh1Stages.length > 0 || relayCh2Stages.length > 0) && !relayPort) {
-        alert("Add a relay board serial port before using relay stages.");
-        return;
-      }
-
-      const normalizedVoltageStages: Array<{ start_time: number; end_time: number; voltage: number }> = [];
-
-      for (let i = 0; i < voltageStages.length; i++) {
-        const stage = voltageStages[i];
-        if (stage.end_time <= stage.start_time) {
-          alert(`Power stage ${i + 1}: end time must be after start time.`);
-          return;
-        }
-
-        const expression = stage.voltageExpression ?? String(stage.voltage);
-        const evaluation = evaluateExpression(expression, { t: stage.start_time });
-
-        if (evaluation.error || evaluation.value === null) {
-          alert(`Power stage ${i + 1}: ${evaluation.error ?? "Invalid expression"}`);
-          return;
-        }
-
-        normalizedVoltageStages.push({
-          start_time: stage.start_time,
-          end_time: stage.end_time,
-          voltage: evaluation.value,
-        });
-      }
-
-      if (normalizedVoltageStages.length !== voltageStages.length) {
-        alert("Failed to normalize voltage stages.");
-        return;
-      }
-
-      for (const [channel, stages] of [
-        [1, relayCh1Stages],
-        [2, relayCh2Stages],
-      ] as const) {
-        for (let i = 0; i < stages.length; i++) {
-          const stage = stages[i];
-          if (stage.end_time <= stage.start_time) {
-            alert(`Relay CH${channel} stage ${i + 1}: end time must be after start time.`);
-            return;
-          }
-        }
-      }
-
-      setVoltageStages((prev) =>
-        prev.map((stage, index) => ({
-          ...stage,
-          voltage: normalizedVoltageStages[index]?.voltage ?? stage.voltage,
-          voltageExpressionError: undefined,
-        }))
-      );
+      const config = buildCurrentMeasurementConfig();
+      if (!config) return;
 
       setIsStarting(true);
-
-      const config = {
-        test_name: testName,
-        dmm1_visa_id: dmm1Visa || null,
-        dmm2_visa_id: dmm2Visa || null,
-        power_supply_visa_id: powerSupplyVisa || null,
-        relay_port: relayPort || null,
-        voltage_stages: normalizedVoltageStages,
-        relay_ch1_stages: relayCh1Stages,
-        relay_ch2_stages: relayCh2Stages,
-        sampling_rate_hz: samplingRate,
-        dmm_acquisition_mode: dmmAcquisitionMode,
-        record_camera: recordCamera,
-        camera_ready_delay_seconds: recordCamera ? cameraReadyDelaySeconds : 0,
-      };
 
       const response = await fetch("/api/start_measurement", {
         method: "POST",
@@ -471,6 +719,41 @@ export default function Home() {
       setIsStarting(false);
       console.error("Error starting measurement:", error);
       alert("Failed to start measurement. Check console for details.");
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    const config = buildCurrentMeasurementConfig();
+    if (!config) return;
+
+    setIsSavingConfig(true);
+    setConfigLoadError(null);
+
+    try {
+      const response = await fetch("/api/experiment_configs/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        const message = data.detail || "Failed to save config.";
+        setConfigLoadError(message);
+        alert(message);
+        return;
+      }
+
+      const savedConfig = data as SaveExperimentConfigResponse;
+      setLoadedConfigName(savedConfig.file_name);
+      setConfigLoadError(null);
+    } catch (error) {
+      const message = "Failed to save config.";
+      setConfigLoadError(message);
+      console.error("Error saving config:", error);
+      alert(message);
+    } finally {
+      setIsSavingConfig(false);
     }
   };
 
@@ -508,6 +791,10 @@ export default function Home() {
           : controlSource === "api"
             ? "API"
             : "Idle";
+  const isCameraDownloadRunning = Boolean(cameraDownloadStatus?.is_running);
+  const cameraDownloadMessage = cameraDownloadStatus?.message || "No transfer started";
+  const cameraDownloadDisabled =
+    isMeasuring || isStarting || cameraStatus.recording || isCameraDownloadRunning;
 
   return (
     <div className="min-h-screen bg-background">
@@ -654,6 +941,94 @@ export default function Home() {
                     </Select>
                   </div>
                 </div>
+                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <Label className="text-sm font-medium">Config file</Label>
+                    <div
+                      className={
+                        configLoadError
+                          ? "truncate text-xs text-destructive"
+                          : "truncate text-xs text-muted-foreground"
+                      }
+                    >
+                      {configLoadError ||
+                        (isSavingConfig ? "Saving..." : loadedConfigName) ||
+                        "No config loaded"}
+                    </div>
+                  </div>
+                  <input
+                    ref={configFileInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={handleConfigFileChange}
+                    disabled={isMeasuring || isStarting}
+                    className="hidden"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSaveConfig}
+                    disabled={isMeasuring || isStarting || isSavingConfig}
+                    className="gap-2"
+                  >
+                    {isSavingConfig ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                    {isSavingConfig ? "Saving" : "Save Config"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => configFileInputRef.current?.click()}
+                    disabled={isMeasuring || isStarting || isSavingConfig}
+                    className="gap-2"
+                  >
+                    <Upload className="h-4 w-4" />
+                    Load Config
+                  </Button>
+                </div>
+                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_8rem] sm:items-center">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <input
+                      id="stop-at-enabled"
+                      type="checkbox"
+                      checked={stopAtEnabled}
+                      onChange={(event) => setStopAtEnabled(event.target.checked)}
+                      disabled={isMeasuring || isStarting}
+                      className="h-4 w-4 rounded border-input"
+                    />
+                    <div className="min-w-0">
+                      <Label htmlFor="stop-at-enabled" className="text-sm font-medium">
+                        Auto stop
+                      </Label>
+                      <div className="text-xs text-muted-foreground">
+                        {stopAtEnabled ? `${stopAfterSeconds} s` : "Manual stop"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label
+                      htmlFor="stop-after-seconds"
+                      className="text-xs uppercase tracking-wide text-muted-foreground"
+                    >
+                      Stop At (s)
+                    </Label>
+                    <Input
+                      id="stop-after-seconds"
+                      type="number"
+                      value={stopAfterSeconds}
+                      onChange={(event) =>
+                        setStopAfterSeconds(Math.max(0, parseFloat(event.target.value) || 0))
+                      }
+                      disabled={!stopAtEnabled || isMeasuring || isStarting}
+                      min={0.1}
+                      step={0.1}
+                      className="h-9"
+                    />
+                  </div>
+                </div>
                 <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_8rem] sm:items-center">
                   <div className="flex min-w-0 items-center gap-3">
                     <input
@@ -696,6 +1071,34 @@ export default function Home() {
                       className="h-9"
                     />
                   </div>
+                </div>
+                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <Label className="text-sm font-medium">Latest recording</Label>
+                    <div
+                      className={
+                        cameraDownloadStatus?.success === false
+                          ? "truncate text-xs text-destructive"
+                          : "truncate text-xs text-muted-foreground"
+                      }
+                    >
+                      {cameraDownloadMessage}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDownloadLatestCameraRecording}
+                    disabled={cameraDownloadDisabled}
+                    className="gap-2"
+                  >
+                    {isCameraDownloadRunning ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    {isCameraDownloadRunning ? "Downloading" : "Download Recording"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>

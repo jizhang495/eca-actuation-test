@@ -36,6 +36,11 @@ class MeasurementConfig(BaseModel):
         default="fast",
         description="DMM integration/noise-rejection mode",
     )
+    stop_after_seconds: Optional[float] = Field(
+        default=None,
+        description="Automatically stop the measurement at this elapsed time in seconds",
+        gt=0,
+    )
     record_camera: bool = Field(default=False, description="Start camera recording with measurement")
     camera_ready_delay_seconds: float = Field(
         default=1.0,
@@ -52,6 +57,23 @@ class StartMeasurementRequest(BaseModel):
         default="api",
         description="Who initiated the run, used for runtime status and audit display",
     )
+
+
+class SaveExperimentConfigRequest(BaseModel):
+    """Request to save an experiment configuration preset."""
+    config: MeasurementConfig
+    file_name: Optional[str] = Field(
+        default=None,
+        description="Optional JSON file name. Defaults to the sanitized test name.",
+    )
+
+
+class SaveExperimentConfigResponse(BaseModel):
+    """Response after saving an experiment configuration preset."""
+    success: bool
+    file_name: str
+    path: str
+    message: str
 
 
 class StopMeasurementResponse(BaseModel):
@@ -140,3 +162,18 @@ class SessionInfo(BaseModel):
     path: str
     files: list[dict]
     config: Optional[dict] = None
+
+
+class CameraDownloadStatus(BaseModel):
+    """Status of the latest camera recording download task."""
+    is_running: bool = False
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    success: Optional[bool] = None
+    message: str = "No camera download has been started"
+    session_dir: Optional[str] = None
+    camera_file: Optional[str] = None
+    destination: Optional[str] = None
+    metadata_path: Optional[str] = None
+    source_size_bytes: Optional[int] = None
+    returncode: Optional[int] = None

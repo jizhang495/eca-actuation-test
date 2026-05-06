@@ -100,6 +100,7 @@ class MeasurementController:
         
         self._measurement_task: Optional[asyncio.Task] = None
         self._voltage_stage_task: Optional[asyncio.Task] = None
+        self._auto_stop_task: Optional[asyncio.Task] = None
         self._camera_start_task: Optional[asyncio.Task] = None
         self._camera_start_log_task: Optional[asyncio.Task] = None
         self._record_camera_for_session = False
@@ -194,6 +195,7 @@ class MeasurementController:
 
         self._camera_start_task = None
         self._camera_start_log_task = None
+        self._auto_stop_task = None
         self._record_event("Measurement t0")
         self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
 
@@ -235,6 +237,12 @@ class MeasurementController:
                 self._execute_relay_stages(2, config.relay_ch2_stages)
             )
             self._relay_stage_tasks.append(task)
+
+        if config.stop_after_seconds is not None:
+            self._record_event(f"Auto stop armed for {config.stop_after_seconds:g} s")
+            self._auto_stop_task = asyncio.create_task(
+                self._auto_stop_at_elapsed_time(config.stop_after_seconds)
+            )
 
         logger.info(f"Measurement started: {self.current_session_id}")
         return self.current_session_id
@@ -332,6 +340,7 @@ class MeasurementController:
         logger.info("Stopping measurement...")
         self._record_event(f"Stop requested by {control_source}", source=control_source)
         self.is_measuring = False
+        current_task = asyncio.current_task()
 
         # Cancel all tasks
         if self._measurement_task:
@@ -345,6 +354,13 @@ class MeasurementController:
             self._voltage_stage_task.cancel()
             try:
                 await self._voltage_stage_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._auto_stop_task and self._auto_stop_task is not current_task:
+            self._auto_stop_task.cancel()
+            try:
+                await self._auto_stop_task
             except asyncio.CancelledError:
                 pass
 
@@ -397,8 +413,33 @@ class MeasurementController:
         self.start_time = None
         self._start_monotonic = None
         self.control_source = None
+        self._measurement_task = None
+        self._voltage_stage_task = None
+        if self._auto_stop_task is not current_task:
+            self._auto_stop_task = None
 
         return response
+
+    async def _auto_stop_at_elapsed_time(self, stop_after_seconds: float):
+        """Stop the run when the configured elapsed time is reached."""
+        try:
+            while self.is_measuring:
+                if self._start_monotonic is None:
+                    return
+
+                remaining = self._start_monotonic + stop_after_seconds - time.perf_counter()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(remaining, 1.0))
+
+            if self.is_measuring:
+                self._record_event(f"Auto stop reached {stop_after_seconds:g} s")
+                await self.stop_measurement(control_source="script")
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if self._auto_stop_task is asyncio.current_task():
+                self._auto_stop_task = None
 
     def _validate_config(self, config: MeasurementConfig):
         """Fail early when the UI submitted an incomplete hardware schedule."""
@@ -651,6 +692,10 @@ class MeasurementController:
         logger.info(f"Executing {len(stages)} relay stages for channel {channel}")
 
         try:
+            initial_success = await self._set_relay_state(channel, False)
+            if not initial_success:
+                raise RuntimeError(f"Failed to set relay CH{channel} to open")
+
             for i, stage in enumerate(stages):
                 # Wait until stage start time
                 while True:
@@ -673,6 +718,17 @@ class MeasurementController:
                     if elapsed >= stage.end_time:
                         break
                     await asyncio.sleep(0.01)
+
+                next_stage = stages[i + 1] if i + 1 < len(stages) else None
+                has_gap_before_next_stage = (
+                    next_stage is not None and next_stage.start_time > stage.end_time
+                )
+                if stage.state == "closed" and has_gap_before_next_stage:
+                    success = await self._set_relay_state(channel, False)
+                    if not success:
+                        raise RuntimeError(f"Failed to set relay CH{channel} to open")
+                    logger.info(f"Relay CH{channel}: open at {elapsed:.2f}s")
+                    self._record_event(f"Relay CH{channel} set to open")
 
         except asyncio.CancelledError:
             logger.info(f"Relay CH{channel} stages cancelled")

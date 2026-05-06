@@ -216,6 +216,7 @@ Content-Type: application/json
     "relay_ch2_stages": [],
     "sampling_rate_hz": 10,
     "dmm_acquisition_mode": "fast",
+    "stop_after_seconds": null,
     "record_camera": false,
     "camera_ready_delay_seconds": 0
   }
@@ -225,6 +226,9 @@ Content-Type: application/json
 `control_source` may be `ui`, `api`, `agent`, or `script`. The browser polls
 `/api/status`, so API-started runs appear in the UI with the active config,
 control source, runtime log, and live plots.
+Set `stop_after_seconds` to a positive elapsed time to stop a run automatically.
+The frontend can load saved session `config.json` files or hand-authored
+experiment config JSON files into the control form.
 
 #### Stop Measurement
 ```http
@@ -239,6 +243,15 @@ GET /api/status
 The status response includes `active_config`, `control_source`, recent runtime
 `events`, acquisition timing, instrument connection state, and camera state.
 
+#### Save Experiment Config
+```http
+POST /api/experiment_configs/save
+```
+
+Saves the submitted measurement config as JSON under
+`user-data/experiment-configs/`. When no file name is supplied, the API uses
+the sanitized test name.
+
 #### Get Current Session Data
 ```http
 GET /api/current_session/data?limit=6000
@@ -247,6 +260,15 @@ GET /api/current_session/data?limit=6000
 Returns recent in-memory readings for the active run. The browser uses this to
 backfill plots when it is opened after an API agent or script has already
 started an experiment.
+
+#### Download Latest Camera Recording
+```http
+POST /api/download_latest_camera_recording
+GET /api/download_latest_camera_recording/status
+```
+
+Starts a background transfer of the newest camera movie into the newest
+measurement session folder and returns the current transfer status.
 
 #### List Instruments
 ```http
