@@ -47,11 +47,16 @@ class MeasurementController:
                 # Try to create real instruments and check for availability
                 test_dmm = KeithleyDMM()
                 available_devices = test_dmm.list_available_devices()
-                use_mock = len(available_devices) == 0
+                usbtmc_devices = Oscilloscope.discover_usbtmc_devices()
+                use_mock = len(available_devices) == 0 and len(usbtmc_devices) == 0
                 if use_mock:
                     logger.warning("No VISA devices detected - using MOCK instruments")
                 else:
-                    logger.info(f"Found {len(available_devices)} VISA devices")
+                    logger.info(
+                        "Found %s VISA devices and %s USBTMC devices",
+                        len(available_devices),
+                        len(usbtmc_devices),
+                    )
             except Exception as e:
                 logger.warning(f"Error detecting VISA devices: {e} - using MOCK instruments")
                 use_mock = True
@@ -111,6 +116,8 @@ class MeasurementController:
         self._auto_stop_task: Optional[asyncio.Task] = None
         self._camera_start_task: Optional[asyncio.Task] = None
         self._camera_start_log_task: Optional[asyncio.Task] = None
+        self._oscilloscope_waveform_csv_path: Optional[str] = None
+        self._oscilloscope_waveform_metadata_path: Optional[str] = None
         self._record_camera_for_session = False
         self._relay_stage_tasks: list[asyncio.Task] = []
         self._relay_lock = asyncio.Lock()
@@ -205,10 +212,15 @@ class MeasurementController:
         self._camera_start_task = None
         self._camera_start_log_task = None
         self._auto_stop_task = None
+        self._oscilloscope_waveform_csv_path = None
+        self._oscilloscope_waveform_metadata_path = None
         self._record_event("Measurement t0")
         self._record_event(f"Measurement source: {config.measurement_source}")
         if config.measurement_source == "dmm":
             self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
+        elif self.oscilloscope.is_connected:
+            await asyncio.to_thread(self.oscilloscope.start_acquisition)
+            self._record_event("Oscilloscope acquisition started")
 
         if config.record_camera:
             camera_start_requested_at = time.perf_counter()
@@ -350,17 +362,40 @@ class MeasurementController:
 
         logger.info("Stopping measurement...")
         self._record_event(f"Stop requested by {control_source}", source=control_source)
+        oscilloscope_stop_elapsed = None
+        if (
+            self.current_config
+            and self.current_config.measurement_source == "oscilloscope"
+            and self.oscilloscope.is_connected
+            and self._start_monotonic is not None
+        ):
+            oscilloscope_stop_elapsed = max(0.0, time.perf_counter() - self._start_monotonic)
+            await asyncio.to_thread(self.oscilloscope.stop_acquisition)
+            self._record_event(
+                "Oscilloscope acquisition stopped",
+                elapsed_time=oscilloscope_stop_elapsed,
+            )
+
         self.is_measuring = False
         current_task = asyncio.current_task()
 
-        # Cancel all tasks
+        # Let the acquisition loop finish any in-flight instrument read before
+        # disconnecting. Cancelling asyncio.to_thread does not stop the worker
+        # thread, which can leave VISA USB resources claimed after Stop.
         if self._measurement_task:
-            self._measurement_task.cancel()
             try:
-                await self._measurement_task
+                await asyncio.wait_for(self._measurement_task, timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning("Voltage acquisition did not stop cleanly; cancelling task")
+                self._measurement_task.cancel()
+                try:
+                    await self._measurement_task
+                except asyncio.CancelledError:
+                    pass
             except asyncio.CancelledError:
                 pass
 
+        # Cancel all scheduled/control tasks
         if self._voltage_stage_task:
             self._voltage_stage_task.cancel()
             try:
@@ -405,6 +440,13 @@ class MeasurementController:
         # Stop data logging
         self.data_logger.stop_logging()
 
+        if (
+            self.current_config
+            and self.current_config.measurement_source == "oscilloscope"
+            and self.oscilloscope.is_connected
+        ):
+            await self._save_oscilloscope_waveform(oscilloscope_stop_elapsed)
+
         # Disconnect instruments
         self._disconnect_instruments()
 
@@ -414,7 +456,9 @@ class MeasurementController:
             "session_id": self.current_session_id,
             "csv_path": str(self.data_logger.csv_file),
             "config_path": str(self.data_logger.config_file),
-            "log_path": str(self.data_logger.log_file)
+            "log_path": str(self.data_logger.log_file),
+            "oscilloscope_csv_path": self._oscilloscope_waveform_csv_path,
+            "oscilloscope_metadata_path": self._oscilloscope_waveform_metadata_path,
         }
 
         self._record_event("Measurement stopped", source=control_source)
@@ -430,6 +474,28 @@ class MeasurementController:
             self._auto_stop_task = None
 
         return response
+
+    async def _save_oscilloscope_waveform(self, stop_elapsed_seconds: Optional[float]):
+        """Export the stopped oscilloscope record into the current session."""
+        try:
+            waveform = await asyncio.to_thread(
+                self.oscilloscope.capture_waveforms,
+                stop_elapsed_seconds,
+            )
+            if not waveform or not waveform.get("rows"):
+                self._record_event("Oscilloscope waveform export produced no data", kind="warning")
+                return
+
+            csv_path, metadata_path = self.data_logger.save_oscilloscope_waveform(waveform)
+            self._oscilloscope_waveform_csv_path = str(csv_path) if csv_path else None
+            self._oscilloscope_waveform_metadata_path = (
+                str(metadata_path) if metadata_path else None
+            )
+            if csv_path:
+                self._record_event(f"Oscilloscope waveform saved to {csv_path.name}")
+        except Exception as e:
+            logger.error("Failed to save oscilloscope waveform: %s", e)
+            self._record_event(f"Oscilloscope waveform export failed: {e}", kind="error")
 
     async def _auto_stop_at_elapsed_time(self, stop_after_seconds: float):
         """Stop the run when the configured elapsed time is reached."""
@@ -524,8 +590,14 @@ class MeasurementController:
             if config.measurement_source == "oscilloscope":
                 success = self.oscilloscope.connect(config.oscilloscope_visa_id)
                 if not success:
+                    error_detail = (
+                        f": {self.oscilloscope.last_error}"
+                        if getattr(self.oscilloscope, "last_error", None)
+                        else ""
+                    )
                     raise RuntimeError(
                         f"Failed to connect oscilloscope: {config.oscilloscope_visa_id}"
+                        f"{error_detail}"
                     )
                 logger.info(f"Oscilloscope connected: {config.oscilloscope_visa_id}")
             else:
@@ -561,8 +633,9 @@ class MeasurementController:
     async def _prime_voltage_reads(self, measurement_source: str):
         """Perform one unlogged read so setup latency does not hit sample 0."""
         if measurement_source == "oscilloscope":
-            if self.oscilloscope.is_connected:
-                await asyncio.to_thread(self.oscilloscope.read_voltages)
+            # In oscilloscope mode the scope records its own waveform. Reading
+            # the waveform during Roll acquisition makes the TBS 2000B display
+            # blink and does not improve the saved data.
             return
 
         prime_tasks = []
@@ -604,6 +677,8 @@ class MeasurementController:
                 now = time.perf_counter()
                 if now < next_sample_at:
                     await asyncio.sleep(next_sample_at - now)
+                if not self.is_measuring:
+                    break
 
                 loop_start = time.perf_counter()
                 late_by_ms = max(0.0, (loop_start - next_sample_at) * 1000)
@@ -613,12 +688,7 @@ class MeasurementController:
 
                 read_start = time.perf_counter()
                 if config.measurement_source == "oscilloscope":
-                    if self.oscilloscope.is_connected:
-                        dmm1_voltage, dmm2_voltage = await asyncio.to_thread(
-                            self.oscilloscope.read_voltages
-                        )
-                    else:
-                        dmm1_voltage, dmm2_voltage = None, None
+                    dmm1_voltage, dmm2_voltage = None, None
                 else:
                     read_tasks = []
                     if self.dmm1.is_connected:
@@ -892,6 +962,19 @@ class MeasurementController:
             else:
                 visa_details = [self._identify_visa_resource(resource) for resource in visa_resources]
 
+            known_resources = set(visa_resources)
+            for device in Oscilloscope.discover_usbtmc_devices():
+                resource = str(device["resource"])
+                if resource in known_resources:
+                    continue
+
+                known_resources.add(resource)
+                visa_resources.append(resource)
+                detail = self._infer_visa_resource(resource, str(device.get("idn") or ""))
+                detail["idn"] = device.get("idn")
+                detail["label"] = self._format_usbtmc_label(device)
+                visa_details.append(detail)
+
         dmm_resources = [item["resource"] for item in visa_details if item["kind"] == "dmm"]
         oscilloscope_resources = [
             item["resource"] for item in visa_details if item["kind"] == "oscilloscope"
@@ -899,15 +982,29 @@ class MeasurementController:
         power_supply_resources = [
             item["resource"] for item in visa_details if item["kind"] == "power_supply"
         ]
+        unknown_resources = [
+            item["resource"] for item in visa_details if item["kind"] == "unknown"
+        ]
 
         return {
             "visa_resources": visa_resources,
-            "dmm_resources": dmm_resources or visa_resources,
-            "oscilloscope_resources": oscilloscope_resources or visa_resources,
-            "power_supply_resources": power_supply_resources or visa_resources,
+            "dmm_resources": dmm_resources + unknown_resources,
+            "oscilloscope_resources": oscilloscope_resources + unknown_resources,
+            "power_supply_resources": power_supply_resources + unknown_resources,
             "visa_details": visa_details,
             "serial_ports": serial_ports
         }
+
+    def _format_usbtmc_label(self, device: dict) -> str:
+        """Format a detected USBTMC device for the instrument selector."""
+        manufacturer = device.get("manufacturer")
+        product = device.get("product")
+        serial = device.get("serial")
+        device_path = device.get("device_path")
+        name = " ".join(str(part) for part in (manufacturer, product) if part)
+        serial_text = f" {serial}" if serial else ""
+        suffix = f" ({device_path})" if device_path else ""
+        return f"Scope: {name or device.get('idn') or device.get('resource')}{serial_text}{suffix}"
 
     def _infer_visa_resource(self, resource: str, idn: Optional[str] = None) -> dict:
         """Classify a VISA resource from cached IDN data or known USB IDs."""
@@ -925,6 +1022,7 @@ class MeasurementController:
             for marker in (
                 "OSCILLOSCOPE",
                 "TEKTRONIX",
+                "TBS",
                 "RIGOL",
                 "SIGLENT",
                 "LECROY",
@@ -937,7 +1035,13 @@ class MeasurementController:
             kind = "power_supply"
         elif "1510::8464" in upper_resource:
             kind = "dmm"
-        elif "SCOPE" in upper_resource or "OSC" in upper_resource:
+        elif (
+            "SCOPE" in upper_resource
+            or "OSC" in upper_resource
+            or "USBTMC::" in upper_resource
+            or "0699::03C7" in upper_resource
+            or "1689::967" in upper_resource
+        ):
             kind = "oscilloscope"
 
         label_prefix = {

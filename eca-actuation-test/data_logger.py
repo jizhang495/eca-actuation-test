@@ -1,5 +1,6 @@
 """Data logging and session management."""
 
+import csv
 import json
 import logging
 import os
@@ -55,6 +56,8 @@ class DataLogger:
         
         self.current_session_dir: Optional[Path] = None
         self.csv_file: Optional[Path] = None
+        self.oscilloscope_waveform_file: Optional[Path] = None
+        self.oscilloscope_waveform_metadata_file: Optional[Path] = None
         self.log_file: Optional[Path] = None
         self.config_file: Optional[Path] = None
         
@@ -81,6 +84,10 @@ class DataLogger:
         self.current_session_dir.mkdir(exist_ok=True)
         
         self.csv_file = self.current_session_dir / "readings.csv"
+        self.oscilloscope_waveform_file = self.current_session_dir / "oscilloscope_waveform.csv"
+        self.oscilloscope_waveform_metadata_file = (
+            self.current_session_dir / "oscilloscope_waveform_metadata.json"
+        )
         self.log_file = self.current_session_dir / "log.txt"
         self.config_file = self.current_session_dir / "config.json"
         
@@ -143,8 +150,8 @@ class DataLogger:
 
         data_point = {
             'time': time_s,
-            'dmm1_voltage': dmm1_voltage if dmm1_voltage is not None else 0.0,
-            'dmm2_voltage': dmm2_voltage if dmm2_voltage is not None else 0.0,
+            'dmm1_voltage': dmm1_voltage,
+            'dmm2_voltage': dmm2_voltage,
             'sample_index': sample_index,
             'read_duration_ms': read_duration_ms,
             'loop_duration_ms': loop_duration_ms,
@@ -183,8 +190,8 @@ class DataLogger:
                         
                         line = (
                             f"{data_point['time']:.6f},"
-                            f"{data_point['dmm1_voltage']:.9f},"
-                            f"{data_point['dmm2_voltage']:.9f},"
+                            f"{self._format_optional_float(data_point['dmm1_voltage'], 9)},"
+                            f"{self._format_optional_float(data_point['dmm2_voltage'], 9)},"
                             f"{data_point['sample_index']},"
                             f"{data_point['read_duration_ms']:.3f},"
                             f"{data_point['loop_duration_ms']:.3f},"
@@ -214,6 +221,50 @@ class DataLogger:
                         
         except Exception as e:
             logger.error(f"Error in writer loop: {e}")
+
+    def save_oscilloscope_waveform(self, waveform: dict) -> tuple[Optional[Path], Optional[Path]]:
+        """Save an exported oscilloscope waveform to the active session."""
+        if not self.current_session_dir:
+            logger.warning("No active session to save oscilloscope waveform")
+            return None, None
+
+        csv_path = self.oscilloscope_waveform_file or (
+            self.current_session_dir / "oscilloscope_waveform.csv"
+        )
+        metadata_path = self.oscilloscope_waveform_metadata_file or (
+            self.current_session_dir / "oscilloscope_waveform_metadata.json"
+        )
+
+        rows = waveform.get("rows", [])
+        metadata = waveform.get("metadata", {})
+
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "time",
+                    "scope_time",
+                    "ch1_voltage",
+                    "ch2_voltage",
+                    "sample_index",
+                    "ch1_sample_index",
+                    "ch2_sample_index",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        logger.info("Oscilloscope waveform saved: %s", csv_path)
+        return csv_path, metadata_path
+
+    @staticmethod
+    def _format_optional_float(value: Optional[float], digits: int) -> str:
+        if value is None:
+            return ""
+        return f"{value:.{digits}f}"
 
     def stop_logging(self):
         """Stop logging and wait for writer thread to finish."""

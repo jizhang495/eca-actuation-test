@@ -393,6 +393,7 @@ async def get_session_data(session_id: str):
         csv_path = f"{info['path']}/readings.csv"
         try:
             df = pd.read_csv(csv_path)
+            df = df.astype(object).where(pd.notnull(df), None)
             data = df.to_dict(orient='records')
             return {"data": data}
         except FileNotFoundError:

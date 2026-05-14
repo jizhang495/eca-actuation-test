@@ -26,7 +26,7 @@ class MeasurementConfig(BaseModel):
     """Configuration for a measurement session."""
     test_name: str = Field(default="test", description="Name for this test")
     measurement_source: MeasurementSource = Field(
-        default="dmm",
+        default="oscilloscope",
         description="Instrument source for the two voltage traces",
     )
     dmm1_visa_id: Optional[str] = Field(None, description="VISA ID for DMM1")
@@ -88,6 +88,8 @@ class StopMeasurementResponse(BaseModel):
     csv_path: str
     config_path: str
     log_path: str
+    oscilloscope_csv_path: Optional[str] = None
+    oscilloscope_metadata_path: Optional[str] = None
 
 
 class InstrumentStatus(BaseModel):

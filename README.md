@@ -7,6 +7,7 @@ A unified web interface for controlling, monitoring, and recording experiments i
 ## Features
 
 - **Real-time Data Visualization**: Live voltage graphs from two DMMs with adjustable scales
+- **Oscilloscope Waveform Export**: Tektronix TBS 2000B CH1/CH2 waveform capture saved at stop
 - **Synchronized Control**: Coordinated control of power supply, relays, and camera
 - **Programmable Stages**: Configure up to 10 voltage/relay stages with precise timing
 - **Data Logging**: Automatic CSV logging with timestamped sessions
@@ -38,9 +39,22 @@ A unified web interface for controlling, monitoring, and recording experiments i
 | Instrument | Model | Communication | Purpose |
 |------------|-------|---------------|---------|
 | DMM ×2 | Keithley 2110 | VISA/USB | Voltage measurement |
+| Oscilloscope | Tektronix TBS 2000B series | VISA/USB or Linux USBTMC | CH1/CH2 voltage measurement |
 | Power Supply | IT6412 | VISA/USB | Programmable voltage output |
 | Relay Board | Devantech USB-RLY08C | USB Serial | Channel switching |
 | Camera | Canon 2000D DSLR | USB (via C++ SDK) | Video recording |
+
+### Tektronix TBS 2000B Oscilloscope Notes
+
+The Tektronix TBS 2000B series can run in Roll mode for slow signals and DC transient tests. In Roll/untriggered mode the scope displays `Measurements are not available when the waveform is untriggered (rolling)`, so the backend does not use the scope's `MEASU:IMM` measurement values for this model. Instead, oscilloscope mode starts acquisition at measurement t0, stops acquisition when the run stops, reads CH1 and CH2 waveform data with `CURVE?`, and saves the captured waveform to `oscilloscope_waveform.csv`.
+
+For oscilloscope acquisition:
+- Select `Oscilloscope` in the voltage source selector.
+- Select the Tektronix scope resource, for example `Scope: TEKTRONIX,TBS2204B,...` or `Scope: Tektronix TBS2204B ... (/dev/usbtmc0)`.
+- CH1 is saved as `ch1_voltage`; CH2 is saved as `ch2_voltage`.
+- The web graphs are not authoritative in oscilloscope mode; use the scope screen during the run and the exported waveform CSV after stop.
+- The app uses `ACQuire:STATE ON` at start and `ACQuire:STATE OFF` at stop, but does not change the horizontal scale, trigger level, or trigger mode.
+- Set the oscilloscope horizontal scale/record length so the displayed record covers the full transient duration you need to save.
 
 ## Prerequisites
 
@@ -144,15 +158,16 @@ When finished, stop all services:
 ### Basic Workflow
 
 1. **Connect Instruments**
-   - Connect DMMs, power supply, and relay board via USB
+   - Connect DMMs or oscilloscope, power supply, and relay board via USB
    - Ensure instruments are powered on
    - The webapp will auto-detect available VISA resources
 
 2. **Configure Test**
    - Enter a test name
-   - Select VISA IDs for DMMs and power supply
+   - Select DMM or oscilloscope as the voltage source
+   - Select VISA IDs for DMMs or oscilloscope and power supply
    - Select serial port for relay board
-   - Set sampling rate (default: 10 Hz)
+   - Set DMM sampling rate when using DMM mode (default: 10 Hz)
 
 3. **Set Up Stages** (Optional)
    - Add voltage stages for power supply (up to 10)
@@ -162,11 +177,11 @@ When finished, stop all services:
 4. **Start Measurement**
    - Click "Start Measurement"
    - Camera begins recording (if available)
-   - DMMs start logging data
+   - DMMs log live data, or the oscilloscope starts its own acquisition
    - Voltage/relay stages execute automatically
 
 5. **Monitor Progress**
-   - Watch live voltage graphs
+   - Watch live DMM graphs, or use the oscilloscope screen in oscilloscope mode
    - Check camera recording status
    - View elapsed time
 
@@ -184,6 +199,7 @@ Each measurement session creates a timestamped folder in `user-data/sessions/` b
 user-data/sessions/
   └── 2025-10-13_14-30-15_test1/
       ├── readings.csv      # Time, DMM1, DMM2 voltages
+      ├── oscilloscope_waveform.csv  # CH1/CH2 waveform export when using oscilloscope mode
       ├── config.json       # Test configuration
       ├── log.txt           # Session log
       └── video.mp4         # Camera recording (manual transfer)

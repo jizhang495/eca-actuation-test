@@ -199,7 +199,7 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
   const dmmAcquisitionMode =
     configValue.dmm_acquisition_mode === "low_noise" ? "low_noise" : "fast";
   const measurementSource =
-    configValue.measurement_source === "oscilloscope" ? "oscilloscope" : "dmm";
+    configValue.measurement_source === "dmm" ? "dmm" : "oscilloscope";
   const stopAfterSeconds =
     configValue.stop_after_seconds === undefined || configValue.stop_after_seconds === null
       ? null
@@ -342,7 +342,7 @@ export default function Home() {
 
   // State for voltage acquisition configuration
   const [measurementSource, setMeasurementSource] =
-    useState<MeasurementSource>("dmm");
+    useState<MeasurementSource>("oscilloscope");
   const [dmm1Visa, setDmm1Visa] = useState("");
   const [dmm2Visa, setDmm2Visa] = useState("");
   const [oscilloscopeVisa, setOscilloscopeVisa] = useState("");
@@ -434,7 +434,7 @@ export default function Home() {
 
   const applyMeasurementConfig = useCallback((config: MeasurementConfig) => {
     setTestName(config.test_name || "test");
-    setMeasurementSource(config.measurement_source || "dmm");
+    setMeasurementSource(config.measurement_source || "oscilloscope");
     setDmm1Visa(config.dmm1_visa_id || "");
     setDmm2Visa(config.dmm2_visa_id || "");
     setOscilloscopeVisa(config.oscilloscope_visa_id || "");
@@ -891,7 +891,11 @@ export default function Home() {
       setSessionId(null);
 
       console.log("Measurement stopped:", data);
-      alert(`Measurement saved to:\n${data.csv_path}`);
+      const savedPaths = [`Measurement saved to:`, data.csv_path];
+      if (data.oscilloscope_csv_path) {
+        savedPaths.push(`Oscilloscope waveform:`, data.oscilloscope_csv_path);
+      }
+      alert(savedPaths.join("\n"));
     } catch (error) {
       console.error("Error stopping measurement:", error);
       alert("Failed to stop measurement. Check console for details.");
@@ -1013,16 +1017,16 @@ export default function Home() {
                 ) : (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <VisaSelectControl
-                      id="voltage-1-visa"
-                      label="Voltage 1 VISA ID"
+                      id="dmm-1-visa"
+                      label="DMM 1 VISA ID"
                       value={dmm1Visa}
                       resources={dmmResources}
                       onChange={setDmm1Visa}
                       disabled={isMeasuring || isStarting}
                     />
                     <VisaSelectControl
-                      id="voltage-2-visa"
-                      label="Voltage 2 VISA ID"
+                      id="dmm-2-visa"
+                      label="DMM 2 VISA ID"
                       value={dmm2Visa}
                       resources={dmmResources}
                       onChange={setDmm2Visa}
@@ -1030,14 +1034,59 @@ export default function Home() {
                     />
                   </div>
                 )}
+                {measurementSource === "dmm" ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label
+                        htmlFor="sampling-rate"
+                        className="text-xs uppercase tracking-wide text-muted-foreground"
+                      >
+                        Sample Rate (Hz)
+                      </Label>
+                      <Input
+                        id="sampling-rate"
+                        type="number"
+                        value={samplingRate}
+                        onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
+                        disabled={isMeasuring || isStarting}
+                        min={1}
+                        max={300}
+                        className="h-9"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label
+                        htmlFor="dmm-acquisition-mode"
+                        className="text-xs uppercase tracking-wide text-muted-foreground"
+                      >
+                        DMM Mode
+                      </Label>
+                      <Select
+                        value={dmmAcquisitionMode}
+                        onValueChange={(value) =>
+                          setDmmAcquisitionMode(value as DmmAcquisitionMode)
+                        }
+                        disabled={isMeasuring || isStarting}
+                      >
+                        <SelectTrigger id="dmm-acquisition-mode" className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="fast">Fast (0.02 PLC)</SelectItem>
+                          <SelectItem value="low_noise">Low noise (1 PLC)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
             <DMMGraph
-              title="Voltage 1"
+              title="DMM 1"
               data={dmm1Data}
             />
             <DMMGraph
-              title="Voltage 2"
+              title="DMM 2"
               data={dmm2Data}
             />
           </div>
@@ -1046,7 +1095,7 @@ export default function Home() {
           <div className="min-w-0 space-y-6">
             <Card>
               <CardContent className="pt-6">
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid gap-4">
                   <div className="space-y-1.5">
                     <Label
                       htmlFor="test-name"
@@ -1062,47 +1111,6 @@ export default function Home() {
                       placeholder="test"
                       className="h-9"
                     />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label
-                      htmlFor="sampling-rate"
-                      className="text-xs uppercase tracking-wide text-muted-foreground"
-                    >
-                      Sampling Rate (Hz)
-                    </Label>
-                    <Input
-                      id="sampling-rate"
-                      type="number"
-                      value={samplingRate}
-                      onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
-                      disabled={isMeasuring || isStarting}
-                      min={1}
-                      max={300}
-                      className="h-9"
-                    />
-                  </div>
-                  <div className="space-y-1.5 sm:col-span-2">
-                    <Label
-                      htmlFor="dmm-acquisition-mode"
-                      className="text-xs uppercase tracking-wide text-muted-foreground"
-                    >
-                      DMM Mode
-                    </Label>
-                    <Select
-                      value={dmmAcquisitionMode}
-                      onValueChange={(value) =>
-                        setDmmAcquisitionMode(value as DmmAcquisitionMode)
-                      }
-                      disabled={isMeasuring || isStarting || measurementSource === "oscilloscope"}
-                    >
-                      <SelectTrigger id="dmm-acquisition-mode" className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="fast">Fast (0.02 PLC)</SelectItem>
-                        <SelectItem value="low_noise">Low noise (1 PLC)</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
