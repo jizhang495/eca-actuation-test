@@ -11,21 +11,10 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 
 interface DMMGraphProps {
   title: string;
   data: Array<{ time: number; voltage: number }>;
-  visaResources: Array<{ resource: string; label: string }>;
-  selectedVisa: string;
-  onVisaChange: (value: string) => void;
 }
 
 const formatWholeSeconds = (value: number | string) => {
@@ -52,9 +41,6 @@ const getWholeSecondStep = (spanSeconds: number, targetTickCount = 10) => {
 export function DMMGraph({
   title,
   data,
-  visaResources,
-  selectedVisa,
-  onVisaChange,
 }: DMMGraphProps) {
   const [xDomain, setXDomain] = useState<[number, number] | undefined>(undefined);
   const [yDomain, setYDomain] = useState<[number, number] | undefined>(undefined);
@@ -278,32 +264,7 @@ export function DMMGraph({
   return (
     <Card className="min-w-0 w-full overflow-hidden">
       <CardHeader className="pb-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-lg">{title}</CardTitle>
-          <div className="flex w-full min-w-0 flex-col gap-1 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
-            <Label htmlFor={`visa-${title}`} className="text-sm whitespace-nowrap">
-              VISA ID:
-            </Label>
-            <Select value={selectedVisa} onValueChange={onVisaChange}>
-              <SelectTrigger id={`visa-${title}`} className="w-full sm:w-[240px]">
-                <SelectValue placeholder="Select instrument" />
-              </SelectTrigger>
-              <SelectContent className="max-w-[calc(100vw-2rem)]">
-                {visaResources.length === 0 ? (
-                  <SelectItem value="none" disabled>
-                    No instruments found
-                  </SelectItem>
-                ) : (
-                  visaResources.map((visa) => (
-                    <SelectItem key={visa.resource} value={visa.resource}>
-                      {visa.label}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <CardTitle className="text-lg">{title}</CardTitle>
       </CardHeader>
       <CardContent className="pt-0 pb-4 px-4">
         <div

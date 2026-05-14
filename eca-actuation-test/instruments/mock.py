@@ -24,6 +24,7 @@ class MockKeithleyDMM:
         return [
             "MOCK::DMM::DMM1::INSTR",
             "MOCK::DMM::DMM2::INSTR",
+            "MOCK::SCOPE::OSC1::INSTR",
             "MOCK::POWER::IT6412::INSTR",
         ]
 
@@ -111,6 +112,7 @@ class MockIT6412PowerSupply:
         return [
             "MOCK::DMM::DMM1::INSTR",
             "MOCK::DMM::DMM2::INSTR",
+            "MOCK::SCOPE::OSC1::INSTR",
             "MOCK::POWER::IT6412::INSTR",
         ]
 
@@ -192,6 +194,68 @@ class MockIT6412PowerSupply:
     @property
     def is_connected(self) -> bool:
         """Check if mock power supply is connected."""
+        return self._is_connected
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.disconnect()
+
+
+class MockOscilloscope:
+    """Mock two-channel oscilloscope."""
+
+    def __init__(self, visa_address: Optional[str] = None):
+        self.visa_address = visa_address or "MOCK::SCOPE::OSC1::INSTR"
+        self._is_connected = False
+        self._started_at = time.monotonic()
+        self._noise_level = 0.002
+
+    def list_available_devices(self) -> list[str]:
+        """List mock VISA devices."""
+        return [
+            "MOCK::DMM::DMM1::INSTR",
+            "MOCK::DMM::DMM2::INSTR",
+            "MOCK::SCOPE::OSC1::INSTR",
+            "MOCK::POWER::IT6412::INSTR",
+        ]
+
+    def connect(self, visa_address: Optional[str] = None) -> bool:
+        if visa_address:
+            self.visa_address = visa_address
+
+        logger.info(f"Mock Oscilloscope connected: {self.visa_address}")
+        self._started_at = time.monotonic()
+        self._is_connected = True
+        return True
+
+    def disconnect(self):
+        logger.info("Mock Oscilloscope disconnected")
+        self._is_connected = False
+
+    def configure_voltage_channels(self):
+        if self._is_connected:
+            logger.debug("Mock oscilloscope configured for CH1/CH2 voltage measurements")
+
+    def read_voltages(self) -> tuple[Optional[float], Optional[float]]:
+        return (self.read_channel_voltage(1), self.read_channel_voltage(2))
+
+    def read_channel_voltage(self, channel: int) -> Optional[float]:
+        if not self._is_connected:
+            return None
+
+        elapsed = time.monotonic() - self._started_at
+        noise = random.gauss(0, self._noise_level)
+        if channel == 1:
+            return 0.25 * random.uniform(-1, 1) + noise
+        if channel == 2:
+            return 0.5 + 0.05 * (elapsed % 10) + noise
+
+        raise ValueError("Only oscilloscope channels 1 and 2 are supported")
+
+    @property
+    def is_connected(self) -> bool:
         return self._is_connected
 
     def __enter__(self):

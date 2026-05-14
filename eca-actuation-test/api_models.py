@@ -4,6 +4,7 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 DMMAcquisitionMode = Literal["fast", "low_noise"]
+MeasurementSource = Literal["dmm", "oscilloscope"]
 ControlSource = Literal["ui", "api", "agent", "script"]
 
 
@@ -24,8 +25,13 @@ class RelayStage(BaseModel):
 class MeasurementConfig(BaseModel):
     """Configuration for a measurement session."""
     test_name: str = Field(default="test", description="Name for this test")
+    measurement_source: MeasurementSource = Field(
+        default="dmm",
+        description="Instrument source for the two voltage traces",
+    )
     dmm1_visa_id: Optional[str] = Field(None, description="VISA ID for DMM1")
     dmm2_visa_id: Optional[str] = Field(None, description="VISA ID for DMM2")
+    oscilloscope_visa_id: Optional[str] = Field(None, description="VISA ID for oscilloscope")
     power_supply_visa_id: Optional[str] = Field(None, description="VISA ID for power supply")
     relay_port: Optional[str] = Field(None, description="Serial port for relay board")
     voltage_stages: list[VoltageStage] = Field(default_factory=list, max_length=10)
@@ -94,6 +100,7 @@ class InstrumentStatus(BaseModel):
 class AcquisitionStats(BaseModel):
     """Runtime acquisition timing statistics."""
     requested_rate_hz: Optional[float] = None
+    measurement_source: Optional[MeasurementSource] = None
     dmm_acquisition_mode: Optional[DMMAcquisitionMode] = None
     sample_count: int = 0
     overrun_count: int = 0
@@ -139,6 +146,7 @@ class InstrumentListResponse(BaseModel):
     """List of available instruments."""
     visa_resources: list[str]
     dmm_resources: list[str] = Field(default_factory=list)
+    oscilloscope_resources: list[str] = Field(default_factory=list)
     power_supply_resources: list[str] = Field(default_factory=list)
     visa_details: list[VisaResourceInfo] = Field(default_factory=list)
     serial_ports: list[str]

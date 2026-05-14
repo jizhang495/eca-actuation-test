@@ -8,8 +8,13 @@ from datetime import datetime
 from typing import Optional
 import pyvisa
 
-from instruments import KeithleyDMM, IT6412PowerSupply, USB_RLY08C
-from instruments.mock import MockKeithleyDMM, MockIT6412PowerSupply, MockUSB_RLY08C
+from instruments import KeithleyDMM, Oscilloscope, IT6412PowerSupply, USB_RLY08C
+from instruments.mock import (
+    MockKeithleyDMM,
+    MockOscilloscope,
+    MockIT6412PowerSupply,
+    MockUSB_RLY08C,
+)
 from camera_controller import CameraController
 from data_logger import DataLogger
 from api_models import ControlSource, MeasurementConfig, VoltageStage, RelayStage
@@ -56,6 +61,7 @@ class MeasurementController:
             logger.info("Initializing MOCK instruments for testing")
             self.dmm1 = MockKeithleyDMM(name="DMM1")
             self.dmm2 = MockKeithleyDMM(name="DMM2")
+            self.oscilloscope = MockOscilloscope()
             self.power_supply = MockIT6412PowerSupply()
             self.relay_board = MockUSB_RLY08C()
             self.use_mock = True
@@ -63,6 +69,7 @@ class MeasurementController:
             logger.info("Initializing REAL instruments")
             self.dmm1 = KeithleyDMM()
             self.dmm2 = KeithleyDMM()
+            self.oscilloscope = Oscilloscope()
             self.power_supply = IT6412PowerSupply()
             self.relay_board = USB_RLY08C()
             self.use_mock = False
@@ -89,6 +96,7 @@ class MeasurementController:
         }
         self.acquisition_stats = {
             "requested_rate_hz": None,
+            "measurement_source": None,
             "dmm_acquisition_mode": None,
             "sample_count": 0,
             "overrun_count": 0,
@@ -184,6 +192,7 @@ class MeasurementController:
         }
         self.acquisition_stats = {
             "requested_rate_hz": config.sampling_rate_hz,
+            "measurement_source": config.measurement_source,
             "dmm_acquisition_mode": config.dmm_acquisition_mode,
             "sample_count": 0,
             "overrun_count": 0,
@@ -197,7 +206,9 @@ class MeasurementController:
         self._camera_start_log_task = None
         self._auto_stop_task = None
         self._record_event("Measurement t0")
-        self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
+        self._record_event(f"Measurement source: {config.measurement_source}")
+        if config.measurement_source == "dmm":
+            self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
 
         if config.record_camera:
             camera_start_requested_at = time.perf_counter()
@@ -214,9 +225,9 @@ class MeasurementController:
                 )
             )
 
-        # Start DMM acquisition task as close as possible to the camera command.
+        # Start voltage acquisition task as close as possible to the camera command.
         self._measurement_task = asyncio.create_task(
-            self._dmm_acquisition_loop(config.sampling_rate_hz)
+            self._voltage_acquisition_loop(config)
         )
 
         # Start voltage stage task
@@ -449,10 +460,26 @@ class MeasurementController:
         if (config.relay_ch1_stages or config.relay_ch2_stages) and not config.relay_port:
             raise RuntimeError("Relay stages require a selected relay board serial port")
 
-        if config.dmm1_visa_id and config.dmm2_visa_id and config.dmm1_visa_id == config.dmm2_visa_id:
+        if (
+            config.measurement_source == "dmm"
+            and config.dmm1_visa_id
+            and config.dmm2_visa_id
+            and config.dmm1_visa_id == config.dmm2_visa_id
+        ):
             raise RuntimeError("DMM1 and DMM2 must use different VISA IDs")
 
-        if config.dmm_acquisition_mode == "low_noise" and config.sampling_rate_hz > 20:
+        if (
+            config.measurement_source == "oscilloscope"
+            and not self.use_mock
+            and not config.oscilloscope_visa_id
+        ):
+            raise RuntimeError("Oscilloscope mode requires a selected oscilloscope VISA ID")
+
+        if (
+            config.measurement_source == "dmm"
+            and config.dmm_acquisition_mode == "low_noise"
+            and config.sampling_rate_hz > 20
+        ):
             logger.warning(
                 "Low-noise DMM mode uses 1 PLC integration and may not sustain %.1f Hz",
                 config.sampling_rate_hz,
@@ -473,35 +500,49 @@ class MeasurementController:
         """Connect all configured instruments."""
         # In mock mode, connect automatically if no address specified
         if self.use_mock:
-            # Auto-connect mock instruments
-            self.dmm1.connect(config.dmm1_visa_id or "MOCK::DMM::DMM1::INSTR")
-            self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
-            logger.info(f"Mock DMM1 connected")
-            
-            self.dmm2.connect(config.dmm2_visa_id or "MOCK::DMM::DMM2::INSTR")
-            self.dmm2.configure_acquisition_mode(config.dmm_acquisition_mode)
-            logger.info(f"Mock DMM2 connected")
+            if config.measurement_source == "oscilloscope":
+                self.oscilloscope.connect(
+                    config.oscilloscope_visa_id or "MOCK::SCOPE::OSC1::INSTR"
+                )
+                self.oscilloscope.configure_voltage_channels()
+                logger.info("Mock Oscilloscope connected")
+            else:
+                self.dmm1.connect(config.dmm1_visa_id or "MOCK::DMM::DMM1::INSTR")
+                self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
+                logger.info("Mock DMM1 connected")
+
+                self.dmm2.connect(config.dmm2_visa_id or "MOCK::DMM::DMM2::INSTR")
+                self.dmm2.configure_acquisition_mode(config.dmm_acquisition_mode)
+                logger.info("Mock DMM2 connected")
             
             self.power_supply.connect(config.power_supply_visa_id or "MOCK::POWER::IT6412::INSTR")
-            logger.info(f"Mock Power Supply connected")
+            logger.info("Mock Power Supply connected")
             
             self.relay_board.connect(config.relay_port or "MOCK_COM3")
-            logger.info(f"Mock Relay Board connected")
+            logger.info("Mock Relay Board connected")
         else:
-            # Connect real instruments only if VISA ID provided
-            if config.dmm1_visa_id:
-                success = self.dmm1.connect(config.dmm1_visa_id)
+            if config.measurement_source == "oscilloscope":
+                success = self.oscilloscope.connect(config.oscilloscope_visa_id)
                 if not success:
-                    raise RuntimeError(f"Failed to connect DMM1: {config.dmm1_visa_id}")
-                self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
-                logger.info(f"DMM1 connected: {config.dmm1_visa_id}")
+                    raise RuntimeError(
+                        f"Failed to connect oscilloscope: {config.oscilloscope_visa_id}"
+                    )
+                logger.info(f"Oscilloscope connected: {config.oscilloscope_visa_id}")
+            else:
+                # Connect real DMMs only if VISA ID provided
+                if config.dmm1_visa_id:
+                    success = self.dmm1.connect(config.dmm1_visa_id)
+                    if not success:
+                        raise RuntimeError(f"Failed to connect DMM1: {config.dmm1_visa_id}")
+                    self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
+                    logger.info(f"DMM1 connected: {config.dmm1_visa_id}")
 
-            if config.dmm2_visa_id:
-                success = self.dmm2.connect(config.dmm2_visa_id)
-                if not success:
-                    raise RuntimeError(f"Failed to connect DMM2: {config.dmm2_visa_id}")
-                self.dmm2.configure_acquisition_mode(config.dmm_acquisition_mode)
-                logger.info(f"DMM2 connected: {config.dmm2_visa_id}")
+                if config.dmm2_visa_id:
+                    success = self.dmm2.connect(config.dmm2_visa_id)
+                    if not success:
+                        raise RuntimeError(f"Failed to connect DMM2: {config.dmm2_visa_id}")
+                    self.dmm2.configure_acquisition_mode(config.dmm_acquisition_mode)
+                    logger.info(f"DMM2 connected: {config.dmm2_visa_id}")
 
             if config.power_supply_visa_id:
                 success = self.power_supply.connect(config.power_supply_visa_id)
@@ -515,10 +556,15 @@ class MeasurementController:
                     raise RuntimeError(f"Failed to connect relay board: {config.relay_port}")
                 logger.info(f"Relay board connected: {config.relay_port}")
 
-            await self._prime_dmm_reads()
+            await self._prime_voltage_reads(config.measurement_source)
 
-    async def _prime_dmm_reads(self):
-        """Perform one unlogged read so DMM setup latency does not hit sample 0."""
+    async def _prime_voltage_reads(self, measurement_source: str):
+        """Perform one unlogged read so setup latency does not hit sample 0."""
+        if measurement_source == "oscilloscope":
+            if self.oscilloscope.is_connected:
+                await asyncio.to_thread(self.oscilloscope.read_voltages)
+            return
+
         prime_tasks = []
         if self.dmm1.is_connected:
             prime_tasks.append(asyncio.to_thread(self.dmm1.read_voltage))
@@ -532,21 +578,26 @@ class MeasurementController:
         """Disconnect all instruments."""
         self.dmm1.disconnect()
         self.dmm2.disconnect()
+        self.oscilloscope.disconnect()
         self.power_supply.disconnect()
         self.relay_board.disconnect()
         logger.info("All instruments disconnected")
 
-    async def _dmm_acquisition_loop(self, sampling_rate_hz: float):
+    async def _voltage_acquisition_loop(self, config: MeasurementConfig):
         """
-        Continuous DMM data acquisition loop.
+        Continuous voltage acquisition loop.
 
         Args:
-            sampling_rate_hz: Sampling rate in Hz
+            config: Measurement configuration for source and sampling rate.
         """
-        interval = 1.0 / sampling_rate_hz
+        interval = 1.0 / config.sampling_rate_hz
         next_sample_at = time.perf_counter()
         sample_index = 0
-        logger.info(f"DMM acquisition started at {sampling_rate_hz} Hz")
+        logger.info(
+            "%s voltage acquisition started at %.3f Hz",
+            config.measurement_source,
+            config.sampling_rate_hz,
+        )
 
         try:
             while self.is_measuring:
@@ -561,18 +612,26 @@ class MeasurementController:
                 elapsed = loop_start - self._start_monotonic
 
                 read_start = time.perf_counter()
-                read_tasks = []
-                if self.dmm1.is_connected:
-                    read_tasks.append(asyncio.to_thread(self.dmm1.read_voltage))
+                if config.measurement_source == "oscilloscope":
+                    if self.oscilloscope.is_connected:
+                        dmm1_voltage, dmm2_voltage = await asyncio.to_thread(
+                            self.oscilloscope.read_voltages
+                        )
+                    else:
+                        dmm1_voltage, dmm2_voltage = None, None
                 else:
-                    read_tasks.append(self._none_async())
+                    read_tasks = []
+                    if self.dmm1.is_connected:
+                        read_tasks.append(asyncio.to_thread(self.dmm1.read_voltage))
+                    else:
+                        read_tasks.append(self._none_async())
 
-                if self.dmm2.is_connected:
-                    read_tasks.append(asyncio.to_thread(self.dmm2.read_voltage))
-                else:
-                    read_tasks.append(self._none_async())
+                    if self.dmm2.is_connected:
+                        read_tasks.append(asyncio.to_thread(self.dmm2.read_voltage))
+                    else:
+                        read_tasks.append(self._none_async())
 
-                dmm1_voltage, dmm2_voltage = await asyncio.gather(*read_tasks)
+                    dmm1_voltage, dmm2_voltage = await asyncio.gather(*read_tasks)
                 read_duration_ms = (time.perf_counter() - read_start) * 1000
                 loop_duration_ms = (time.perf_counter() - loop_start) * 1000
                 overrun = loop_duration_ms > interval * 1000
@@ -614,7 +673,8 @@ class MeasurementController:
 
                 if overrun and sample_count % 10 == 0:
                     logger.warning(
-                        "DMM acquisition overrun: requested %.3f ms, last loop %.3f ms",
+                        "%s acquisition overrun: requested %.3f ms, last loop %.3f ms",
+                        config.measurement_source,
                         interval * 1000,
                         loop_duration_ms,
                     )
@@ -626,7 +686,7 @@ class MeasurementController:
                     next_sample_at = time.perf_counter()
 
         except asyncio.CancelledError:
-            logger.info("DMM acquisition stopped")
+            logger.info("%s voltage acquisition stopped", config.measurement_source)
             raise
 
     async def _none_async(self):
@@ -779,6 +839,11 @@ class MeasurementController:
                     "address": self.dmm2.visa_address
                 },
                 {
+                    "name": "Oscilloscope" + (" (MOCK)" if self.use_mock else ""),
+                    "connected": self.oscilloscope.is_connected,
+                    "address": self.oscilloscope.visa_address
+                },
+                {
                     "name": "Power Supply" + (" (MOCK)" if self.use_mock else ""),
                     "connected": self.power_supply.is_connected,
                     "address": self.power_supply.visa_address
@@ -805,7 +870,13 @@ class MeasurementController:
                 {
                     "resource": resource,
                     "idn": resource,
-                    "kind": "power_supply" if "POWER" in resource else "dmm",
+                    "kind": (
+                        "power_supply"
+                        if "POWER" in resource
+                        else "oscilloscope"
+                        if "SCOPE" in resource
+                        else "dmm"
+                    ),
                     "label": resource,
                 }
                 for resource in visa_resources
@@ -822,6 +893,9 @@ class MeasurementController:
                 visa_details = [self._identify_visa_resource(resource) for resource in visa_resources]
 
         dmm_resources = [item["resource"] for item in visa_details if item["kind"] == "dmm"]
+        oscilloscope_resources = [
+            item["resource"] for item in visa_details if item["kind"] == "oscilloscope"
+        ]
         power_supply_resources = [
             item["resource"] for item in visa_details if item["kind"] == "power_supply"
         ]
@@ -829,6 +903,7 @@ class MeasurementController:
         return {
             "visa_resources": visa_resources,
             "dmm_resources": dmm_resources or visa_resources,
+            "oscilloscope_resources": oscilloscope_resources or visa_resources,
             "power_supply_resources": power_supply_resources or visa_resources,
             "visa_details": visa_details,
             "serial_ports": serial_ports
@@ -845,13 +920,29 @@ class MeasurementController:
             kind = "dmm"
         elif "IT6412" in upper_idn or "ITECH" in upper_idn or "IT-M" in upper_idn:
             kind = "power_supply"
+        elif any(
+            marker in upper_idn
+            for marker in (
+                "OSCILLOSCOPE",
+                "TEKTRONIX",
+                "RIGOL",
+                "SIGLENT",
+                "LECROY",
+                "MSO",
+                "DSO",
+            )
+        ):
+            kind = "oscilloscope"
         elif "11975::25618" in upper_resource:
             kind = "power_supply"
         elif "1510::8464" in upper_resource:
             kind = "dmm"
+        elif "SCOPE" in upper_resource or "OSC" in upper_resource:
+            kind = "oscilloscope"
 
         label_prefix = {
             "dmm": "DMM",
+            "oscilloscope": "Scope",
             "power_supply": "Power",
         }.get(kind, "VISA")
         label = f"{label_prefix}: {idn or resource}"

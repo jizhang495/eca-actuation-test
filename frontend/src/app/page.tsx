@@ -41,11 +41,14 @@ interface DMMReading {
 
 type ControlSource = "ui" | "api" | "agent" | "script";
 type DmmAcquisitionMode = "fast" | "low_noise";
+type MeasurementSource = "dmm" | "oscilloscope";
 
 interface MeasurementConfig {
   test_name: string;
+  measurement_source?: MeasurementSource;
   dmm1_visa_id: string | null;
   dmm2_visa_id: string | null;
+  oscilloscope_visa_id?: string | null;
   power_supply_visa_id: string | null;
   relay_port: string | null;
   voltage_stages: Array<{ start_time: number; end_time: number; voltage: number }>;
@@ -195,6 +198,8 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
 
   const dmmAcquisitionMode =
     configValue.dmm_acquisition_mode === "low_noise" ? "low_noise" : "fast";
+  const measurementSource =
+    configValue.measurement_source === "oscilloscope" ? "oscilloscope" : "dmm";
   const stopAfterSeconds =
     configValue.stop_after_seconds === undefined || configValue.stop_after_seconds === null
       ? null
@@ -205,8 +210,10 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
       typeof configValue.test_name === "string" && configValue.test_name.trim()
         ? configValue.test_name
         : "test",
+    measurement_source: measurementSource,
     dmm1_visa_id: readOptionalString(configValue.dmm1_visa_id),
     dmm2_visa_id: readOptionalString(configValue.dmm2_visa_id),
+    oscilloscope_visa_id: readOptionalString(configValue.oscilloscope_visa_id),
     power_supply_visa_id: readOptionalString(configValue.power_supply_visa_id),
     relay_port: readOptionalString(configValue.relay_port),
     voltage_stages: normalizeVoltageStages(configValue.voltage_stages),
@@ -223,6 +230,90 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
     ),
   };
 };
+
+interface VisaSelectControlProps {
+  id: string;
+  label: string;
+  value: string;
+  resources: VisaResourceOption[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}
+
+function VisaSelectControl({
+  id,
+  label,
+  value,
+  resources,
+  onChange,
+  disabled = false,
+}: VisaSelectControlProps) {
+  return (
+    <div className="min-w-0 space-y-1.5">
+      <Label
+        htmlFor={id}
+        className="text-xs uppercase tracking-wide text-muted-foreground"
+      >
+        {label}
+      </Label>
+      <Select value={value} onValueChange={onChange} disabled={disabled}>
+        <SelectTrigger id={id} className="h-9">
+          <SelectValue placeholder="Select instrument" />
+        </SelectTrigger>
+        <SelectContent className="max-w-[calc(100vw-2rem)]">
+          {resources.length === 0 ? (
+            <SelectItem value="none" disabled>
+              No instruments found
+            </SelectItem>
+          ) : (
+            resources.map((visa) => (
+              <SelectItem key={visa.resource} value={visa.resource}>
+                {visa.label}
+              </SelectItem>
+            ))
+          )}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+interface MeasurementSourceOptionProps {
+  id: string;
+  label: string;
+  value: MeasurementSource;
+  selectedValue: MeasurementSource;
+  onChange: (value: MeasurementSource) => void;
+  disabled?: boolean;
+}
+
+function MeasurementSourceOption({
+  id,
+  label,
+  value,
+  selectedValue,
+  onChange,
+  disabled = false,
+}: MeasurementSourceOptionProps) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm font-medium has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+    >
+      <input
+        id={id}
+        type="radio"
+        name="measurement-source"
+        value={value}
+        checked={selectedValue === value}
+        disabled={disabled}
+        onChange={() => onChange(value)}
+        className="h-4 w-4 accent-primary"
+      />
+      {label}
+    </label>
+  );
+}
 
 export default function Home() {
   // State for measurements
@@ -243,12 +334,18 @@ export default function Home() {
 
   // State for instruments
   const [dmmResources, setDmmResources] = useState<VisaResourceOption[]>([]);
+  const [oscilloscopeResources, setOscilloscopeResources] = useState<
+    VisaResourceOption[]
+  >([]);
   const [powerSupplyResources, setPowerSupplyResources] = useState<VisaResourceOption[]>([]);
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
 
-  // State for DMM configuration
+  // State for voltage acquisition configuration
+  const [measurementSource, setMeasurementSource] =
+    useState<MeasurementSource>("dmm");
   const [dmm1Visa, setDmm1Visa] = useState("");
   const [dmm2Visa, setDmm2Visa] = useState("");
+  const [oscilloscopeVisa, setOscilloscopeVisa] = useState("");
   const [dmm1Data, setDmm1Data] = useState<Array<{ time: number; voltage: number }>>([]);
   const [dmm2Data, setDmm2Data] = useState<Array<{ time: number; voltage: number }>>([]);
 
@@ -303,11 +400,15 @@ export default function Home() {
       const toOptions = (resources: string[]): VisaResourceOption[] =>
         resources.map((resource) => detailMap.get(resource) || { resource, label: resource });
       const nextDmmResources = toOptions(data.dmm_resources || data.visa_resources || []);
+      const nextOscilloscopeResources = toOptions(
+        data.oscilloscope_resources || data.visa_resources || []
+      );
       const nextPowerSupplyResources = toOptions(
         data.power_supply_resources || data.visa_resources || []
       );
 
       setDmmResources(nextDmmResources);
+      setOscilloscopeResources(nextOscilloscopeResources);
       setPowerSupplyResources(nextPowerSupplyResources);
       setSerialPorts(data.serial_ports || []);
       setDmm1Visa((value) =>
@@ -315,6 +416,11 @@ export default function Home() {
       );
       setDmm2Visa((value) =>
         value && !nextDmmResources.some((option) => option.resource === value) ? "" : value
+      );
+      setOscilloscopeVisa((value) =>
+        value && !nextOscilloscopeResources.some((option) => option.resource === value)
+          ? ""
+          : value
       );
       setPowerSupplyVisa((value) =>
         value && !nextPowerSupplyResources.some((option) => option.resource === value)
@@ -328,8 +434,10 @@ export default function Home() {
 
   const applyMeasurementConfig = useCallback((config: MeasurementConfig) => {
     setTestName(config.test_name || "test");
+    setMeasurementSource(config.measurement_source || "dmm");
     setDmm1Visa(config.dmm1_visa_id || "");
     setDmm2Visa(config.dmm2_visa_id || "");
+    setOscilloscopeVisa(config.oscilloscope_visa_id || "");
     setPowerSupplyVisa(config.power_supply_visa_id || "");
     setRelayPort(config.relay_port || "");
     setVoltageStages(
@@ -585,8 +693,13 @@ export default function Home() {
   }, [isMeasuring, connectWebSocket, disconnectWebSocket]);
 
   const buildCurrentMeasurementConfig = useCallback((): MeasurementConfig | null => {
-    if (dmm1Visa && dmm2Visa && dmm1Visa === dmm2Visa) {
+    if (measurementSource === "dmm" && dmm1Visa && dmm2Visa && dmm1Visa === dmm2Visa) {
       alert("DMM1 and DMM2 must use different VISA IDs.");
+      return null;
+    }
+
+    if (measurementSource === "oscilloscope" && !oscilloscopeVisa) {
+      alert("Add an oscilloscope VISA ID before using oscilloscope mode.");
       return null;
     }
 
@@ -652,8 +765,10 @@ export default function Home() {
 
     return {
       test_name: testName,
+      measurement_source: measurementSource,
       dmm1_visa_id: dmm1Visa || null,
       dmm2_visa_id: dmm2Visa || null,
+      oscilloscope_visa_id: oscilloscopeVisa || null,
       power_supply_visa_id: powerSupplyVisa || null,
       relay_port: relayPort || null,
       voltage_stages: normalizedVoltageStages,
@@ -670,6 +785,8 @@ export default function Home() {
     dmm1Visa,
     dmm2Visa,
     dmmAcquisitionMode,
+    measurementSource,
+    oscilloscopeVisa,
     powerSupplyVisa,
     recordCamera,
     relayCh1Stages,
@@ -860,21 +977,68 @@ export default function Home() {
       {/* Main Content */}
       <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-          {/* Left Column - DMM Graphs */}
+          {/* Left Column - Voltage Graphs */}
           <div className="min-w-0 space-y-6">
+            <Card>
+              <CardContent className="space-y-4 p-4">
+                <fieldset className="grid gap-3 sm:grid-cols-2">
+                  <legend className="sr-only">Voltage measurement source</legend>
+                  <MeasurementSourceOption
+                    id="measurement-source-dmm"
+                    label="DMM"
+                    value="dmm"
+                    selectedValue={measurementSource}
+                    onChange={setMeasurementSource}
+                    disabled={isMeasuring || isStarting}
+                  />
+                  <MeasurementSourceOption
+                    id="measurement-source-oscilloscope"
+                    label="Oscilloscope"
+                    value="oscilloscope"
+                    selectedValue={measurementSource}
+                    onChange={setMeasurementSource}
+                    disabled={isMeasuring || isStarting}
+                  />
+                </fieldset>
+
+                {measurementSource === "oscilloscope" ? (
+                  <VisaSelectControl
+                    id="oscilloscope-visa"
+                    label="Oscilloscope VISA ID"
+                    value={oscilloscopeVisa}
+                    resources={oscilloscopeResources}
+                    onChange={setOscilloscopeVisa}
+                    disabled={isMeasuring || isStarting}
+                  />
+                ) : (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <VisaSelectControl
+                      id="voltage-1-visa"
+                      label="Voltage 1 VISA ID"
+                      value={dmm1Visa}
+                      resources={dmmResources}
+                      onChange={setDmm1Visa}
+                      disabled={isMeasuring || isStarting}
+                    />
+                    <VisaSelectControl
+                      id="voltage-2-visa"
+                      label="Voltage 2 VISA ID"
+                      value={dmm2Visa}
+                      resources={dmmResources}
+                      onChange={setDmm2Visa}
+                      disabled={isMeasuring || isStarting}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
             <DMMGraph
-              title="DMM 1"
+              title="Voltage 1"
               data={dmm1Data}
-              visaResources={dmmResources}
-              selectedVisa={dmm1Visa}
-              onVisaChange={setDmm1Visa}
             />
             <DMMGraph
-              title="DMM 2"
+              title="Voltage 2"
               data={dmm2Data}
-              visaResources={dmmResources}
-              selectedVisa={dmm2Visa}
-              onVisaChange={setDmm2Visa}
             />
           </div>
 
@@ -929,7 +1093,7 @@ export default function Home() {
                       onValueChange={(value) =>
                         setDmmAcquisitionMode(value as DmmAcquisitionMode)
                       }
-                      disabled={isMeasuring || isStarting}
+                      disabled={isMeasuring || isStarting || measurementSource === "oscilloscope"}
                     >
                       <SelectTrigger id="dmm-acquisition-mode" className="h-9">
                         <SelectValue />
