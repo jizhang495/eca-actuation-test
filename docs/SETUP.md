@@ -5,16 +5,17 @@ Detailed setup instructions for the ECA Testing Webapp.
 ## System Requirements
 
 ### Hardware
-- Windows 10/11 (recommended) or Linux
+- Linux or Windows 10/11
 - USB ports for instruments
 - Minimum 4GB RAM
-- 100MB free disk space
+- Free disk space for session CSVs and camera movies; long camera runs can be large
 
 ### Software
 - [uv](https://github.com/astral-sh/uv) package manager
 - Node.js 18 or higher
 - VISA drivers (NI-VISA recommended)
 - USB drivers for instruments
+- ffmpeg for MOV to MP4 conversion when camera download/compression is used
 
 ## Step-by-Step Setup
 
@@ -106,6 +107,13 @@ COM4
 3. Ensure output is OFF initially
 4. Verify VISA connection
 
+#### Oscilloscope (Tektronix)
+1. Connect via USB or another VISA-supported transport
+2. Power on and verify it appears in `pyvisa.ResourceManager().list_resources()`
+3. Connect CH1 to the applied voltage signal
+4. Connect CH2 to the current shunt voltage; the app converts current as `ch2_voltage / 330`
+5. Set the probe attenuation on the scope to match the physical probe before a run
+
 #### Relay Board (USB-RLY08C)
 1. Connect via USB
 2. Install USB-Serial driver if needed
@@ -118,7 +126,19 @@ COM4
 3. Set to Movie mode
 4. Ensure SD card is inserted
 
-### 6. Compile Camera Executables (Optional)
+### 6. Build Camera Bridge (Optional)
+
+The current synchronized camera path uses the long-lived `CameraControl` daemon through `camera/camera_service.py`. `./start.sh` builds `camera/CameraControl` automatically when the Canon EDSDK folder is present and the binary is missing or stale.
+
+On Linux, build manually with:
+
+```bash
+cd camera
+./build_camera.sh
+./CameraControl detect
+```
+
+`StartRecord.cpp` and `StopRecord.cpp` are legacy one-shot examples retained from the older workflow. They are not the preferred path for synchronized runs.
 
 #### Windows with Visual Studio
 
@@ -139,6 +159,20 @@ g++ StopRecord.cpp -I"C:\path\to\EDSDK\Header" -L"C:\path\to\EDSDK\Library" -lED
 Copy EDSDK DLLs to camera directory or add to PATH.
 
 ## Running the Application
+
+The normal local setup uses three services:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- Camera service: `http://localhost:8001`
+
+The easiest path is:
+
+```bash
+OPEN_BROWSER=0 ./start.sh
+```
+
+Leave `OPEN_BROWSER=0` off if you want the script to open the browser automatically.
 
 ### Development Mode
 
@@ -163,6 +197,8 @@ npm run dev
 ### Access the Application
 
 Open browser to: `http://localhost:3000`
+
+Agents should control runs through the same backend HTTP API that the browser uses. See [OPERATION.md](OPERATION.md) for the current automation contract, timing behavior, output files, and sync expectations.
 
 ## Testing Without Hardware
 
@@ -195,16 +231,18 @@ This is normal if camera is not compiled/connected. App works in mock mode.
 
 ### "Port 8000 already in use"
 
-Kill existing process or change port in `run_backend.py`:
+Kill the existing backend process or change the backend port in `run_backend.py`. Do not use port `8001`, because that is the camera service port. For example, use `8002`:
 ```python
-uvicorn.run("app:app", host="0.0.0.0", port=8001)
+uvicorn.run("app:app", host="0.0.0.0", port=8002)
 ```
 
 Or run with different port:
 ```bash
 cd eca-actuation-test
-uv run python -c "import uvicorn; uvicorn.run('app:app', host='0.0.0.0', port=8001)"
+uv run python -c "import uvicorn; uvicorn.run('app:app', host='0.0.0.0', port=8002)"
 ```
+
+If the backend port changes, also update the frontend rewrite target in `frontend/next.config.js`.
 
 ### Frontend build errors
 
@@ -216,7 +254,9 @@ npm install
 
 ## Production Deployment
 
-### Using Docker
+### Docker
+
+The repository does not currently include production Dockerfiles. Treat the following as a starting point only; it is not a ready-to-run deployment recipe.
 
 Create `docker-compose.yml`:
 
@@ -254,12 +294,13 @@ docker-compose up
 
 ## Next Steps
 
-1. Read [README.md](README.md) for usage instructions
-2. Check [docs/PRD.md](docs/PRD.md) for detailed specifications
-3. Test with mock data first
-4. Connect real instruments
-5. Run calibration tests
-6. Begin experiments
+1. Read [README.md](../README.md) for usage instructions
+2. Read [OPERATION.md](OPERATION.md) for sync, automation, and run-output behavior
+3. Check [KNOWN_ISSUES.md](KNOWN_ISSUES.md) before hardware runs
+4. Test with mock data first
+5. Connect real instruments
+6. Run calibration tests
+7. Begin experiments
 
 ## Support
 
@@ -284,11 +325,13 @@ If you encounter issues:
 
 ### High-Speed Acquisition
 
-For sampling rates >10 Hz:
+For DMM sampling rates >10 Hz:
 1. Use USB 3.0 ports
 2. Close unnecessary applications
 3. Increase buffer sizes in instrument drivers
 4. Consider dedicated instrument PC
+
+For relay-edge current peaks, use oscilloscope mode rather than relying on DMM acquisition. The current full-record Tektronix mode starts acquisition before `t0`, stops at measurement stop, and writes `oscilloscope_waveform.csv` plus metadata into the session folder.
 
 ### Network Performance
 

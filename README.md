@@ -1,457 +1,101 @@
 # ECA Testing Webapp
 
-**Electrochemical Actuator Testing and Control System**
+Electrochemical actuator experiment control system for synchronized electrical measurement, voltage/relay actuation, and optional camera recording.
 
-A unified web interface for controlling, monitoring, and recording experiments involving electrochemical actuators (ECAs). Coordinates multiple laboratory instruments including digital multimeters, DC power supplies, relay boards, and cameras for precise, reproducible actuator measurements.
+The app is designed for two equivalent control paths:
 
-## Features
+- A human controls a run from the browser at `http://localhost:3000`.
+- An AI agent or script controls the same backend through HTTP while a human can open the browser anytime to monitor progress.
 
-- **Real-time Data Visualization**: Live voltage graphs from two DMMs with adjustable scales
-- **Oscilloscope Waveform Export**: Tektronix TBS 2000B CH1/CH2 waveform capture saved at stop
-- **Synchronized Control**: Coordinated control of power supply, relays, and camera
-- **Programmable Stages**: Configure up to 10 voltage/relay stages with precise timing
-- **Data Logging**: Automatic CSV logging with timestamped sessions
-- **REST API**: Full API access for automation and integration
-- **WebSocket Streaming**: Real-time data push for live monitoring
-- **Modern UI**: Built with React, Next.js, and shadcn/ui components
+The backend is the shared control plane. See [docs/OPERATION.md](docs/OPERATION.md) for the current timing, sync, automation, and output contract.
 
-## Architecture
+## What It Controls
 
-### Backend (Python + FastAPI)
-- **FastAPI** server with REST and WebSocket endpoints
-- **Instrument drivers** for DMMs, power supply, relay board
-- **Data logger** for CSV recording and session management
-- **Camera controller** bridge to C++ camera service
-- **Async scheduler** for precise timing control
-
-### Frontend (Next.js + React)
-- **Next.js** with TypeScript
-- **shadcn/ui** component library
-- **Recharts** for live data visualization
-- **WebSocket client** for real-time updates
-
-### Camera Service (C++ + Python)
-- **C++ executables** for Canon camera control
-- **Python HTTP bridge** for API integration
-
-## Supported Instruments
-
-| Instrument | Model | Communication | Purpose |
-|------------|-------|---------------|---------|
-| DMM ×2 | Keithley 2110 | VISA/USB | Voltage measurement |
-| Oscilloscope | Tektronix TBS 2000B series | VISA/USB or Linux USBTMC | CH1/CH2 voltage measurement |
-| Power Supply | IT6412 | VISA/USB | Programmable voltage output |
-| Relay Board | Devantech USB-RLY08C | USB Serial | Channel switching |
-| Camera | Canon 2000D DSLR | USB (via C++ SDK) | Video recording |
-
-### Tektronix TBS 2000B Oscilloscope Notes
-
-The Tektronix TBS 2000B series can run in Roll mode for slow signals and DC transient tests. In Roll/untriggered mode the scope displays `Measurements are not available when the waveform is untriggered (rolling)`, so the backend does not use the scope's `MEASU:IMM` measurement values for this model. Instead, oscilloscope mode starts acquisition at measurement t0, stops acquisition when the run stops, reads CH1 and CH2 waveform data with `CURVE?`, and saves the captured waveform to `oscilloscope_waveform.csv`.
-
-For oscilloscope acquisition:
-- Select `Oscilloscope` in the voltage source selector.
-- Select the Tektronix scope resource, for example `Scope: TEKTRONIX,TBS2204B,...` or `Scope: Tektronix TBS2204B ... (/dev/usbtmc0)`.
-- CH1 is saved as `ch1_voltage`; CH2 is saved as `ch2_voltage`.
-- The web graphs are not authoritative in oscilloscope mode; use the scope screen during the run and the exported waveform CSV after stop.
-- The app uses `ACQuire:STATE ON` at start and `ACQuire:STATE OFF` at stop, but does not change the horizontal scale, trigger level, or trigger mode.
-- Set the oscilloscope horizontal scale/record length so the displayed record covers the full transient duration you need to save.
-
-## Prerequisites
-
-### Backend
-- [uv](https://github.com/astral-sh/uv) package manager
-- VISA drivers (NI-VISA or compatible)
-- USB drivers for instruments
-
-### Frontend
-- Node.js 18 or higher
-- npm or yarn
-
-### Camera (Optional)
-- Canon EDSDK (for camera control)
-- C++ compiler (Visual Studio or MinGW on Windows)
-
-## Installation
-
-### 1. Clone Repository
-
-```bash
-git clone https://github.com/yourusername/eca-actuation-test.git
-cd eca-actuation-test
-```
-
-### 2. Backend Setup
-
-Using uv:
-
-```bash
-# Install dependencies
-cd eca-actuation-test
-uv sync
-```
-
-### 3. Frontend Setup
-
-```bash
-cd frontend
-npm install
-```
-
-### 4. Camera Service Setup (Optional)
-
-See [camera/README.md](camera/README.md) for compilation instructions.
+| Instrument | Model | Purpose |
+| --- | --- | --- |
+| DMM x2 | Keithley 2110 | Slow voltage checks and DMM-mode logging |
+| Oscilloscope | Tektronix TBS 2000B series | Full-record CH1/CH2 capture for relay-edge transients |
+| Power supply | IT6412 | Programmed voltage stages |
+| Relay board | Devantech USB-RLY08C | Programmed relay switching |
+| Camera | Canon 2000D DSLR | Synchronized video recording |
 
 ## Quick Start
 
-### 1. Start Backend Server
+```bash
+OPEN_BROWSER=0 ./start.sh
+```
+
+Services:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- Camera service: `http://localhost:8001`
+
+Run a saved preset through the same HTTP path used by the browser:
 
 ```bash
-# From project root
+uv run python3 scripts/run_experiment_config_http.py \
+  step_voltage_relay2_750s_oscilloscope.json \
+  --leave-services-running
+```
+
+Open `http://localhost:3000` during the run to monitor the active config, elapsed time, live data, camera state, and runtime events.
+
+## Session Output
+
+Runs create timestamped folders under `user-data/sessions/` unless `ECA_DATA_DIR` is set.
+
+Typical outputs:
+
+```text
+user-data/sessions/<timestamp>_<test_name>/
+  config.json
+  log.txt
+  readings.csv
+  oscilloscope_waveform.csv
+  oscilloscope_waveform_metadata.json
+  oscilloscope_waveform.svg
+  oscilloscope_waveform_analysis.svg
+  <camera-recording>.mp4
+```
+
+Not every run creates every file. DMM-only runs do not create oscilloscope waveform files. Runs without camera recording do not create video files. Raw camera movies are stored outside session folders under `user-data/big-videos/`; converted MP4s are stored in the session folder using H.264 CRF 22.
+
+## Documentation
+
+- [Quickstart](docs/QUICKSTART.md): shortest path to running the app
+- [Setup](docs/SETUP.md): dependencies, drivers, ports, and hardware setup
+- [Operation](docs/OPERATION.md): sync model, `t0`, agent/browser control, automation, and outputs
+- [Camera](docs/CAMERA.md): Canon bridge, camera service, and video download/compression
+- [Development](docs/DEVELOPMENT.md): frontend notes, mock instruments, validation commands
+- [Requirements](docs/REQUIREMENTS.md): current product requirements
+- [Known Issues](docs/KNOWN_ISSUES.md): audit findings and fix candidates
+- [LabVIEW Legacy Notes](docs/LABVIEW.md): previous LabVIEW implementation and hardware context
+
+## Common Commands
+
+```bash
+# Backend only
 cd eca-actuation-test
 uv run run_backend.py
-```
 
-The backend will start on `http://localhost:8000`
-
-### 2. Start Camera Service (Optional)
-
-In a separate terminal:
-
-```bash
+# Camera service only
 cd camera
 uv run camera_service.py
-```
 
-The camera service will start on `http://localhost:8001`
-
-### 3. Start Frontend
-
-In another terminal:
-
-```bash
+# Frontend only
 cd frontend
 npm run dev
+
+# Plot oscilloscope waveform
+uv run python3 scripts/plot_oscilloscope_waveform.py \
+  user-data/sessions/<session>/oscilloscope_waveform.csv \
+  --analysis-output user-data/sessions/<session>/oscilloscope_waveform_analysis.svg
 ```
 
-The frontend will start on `http://localhost:3000`
-
-### 4. Open Browser
-
-Navigate to `http://localhost:3000`
-
-### 5. Stop Services
-
-When finished, stop all services:
-
-**Windows:**
-```powershell
-.\stop.ps1
-```
-
-**Linux/Mac:**
-```bash
-./stop.sh
-```
-
-## Usage
-
-### Basic Workflow
-
-1. **Connect Instruments**
-   - Connect DMMs or oscilloscope, power supply, and relay board via USB
-   - Ensure instruments are powered on
-   - The webapp will auto-detect available VISA resources
-
-2. **Configure Test**
-   - Enter a test name
-   - Select DMM or oscilloscope as the voltage source
-   - Select VISA IDs for DMMs or oscilloscope and power supply
-   - Select serial port for relay board
-   - Set DMM sampling rate when using DMM mode (default: 10 Hz)
-
-3. **Set Up Stages** (Optional)
-   - Add voltage stages for power supply (up to 10)
-   - Add relay stages for channels 1 and 2 (up to 10 each)
-   - Configure start time, end time, and values
-
-4. **Start Measurement**
-   - Click "Start Measurement"
-   - Camera begins recording (if available)
-   - DMMs log live data, or the oscilloscope starts its own acquisition
-   - Voltage/relay stages execute automatically
-
-5. **Monitor Progress**
-   - Watch live DMM graphs, or use the oscilloscope screen in oscilloscope mode
-   - Check camera recording status
-   - View elapsed time
-
-6. **Stop Measurement**
-   - Click "Stop Measurement"
-   - Camera stops recording
-   - Data is saved to CSV
-   - Session folder created in `user-data/sessions/`
-
-### Data Output
-
-Each measurement session creates a timestamped folder in `user-data/sessions/` by default. Set `ECA_DATA_DIR` to store sessions elsewhere.
-
-```
-user-data/sessions/
-  └── 2025-10-13_14-30-15_test1/
-      ├── readings.csv      # Time, DMM1, DMM2 voltages
-      ├── oscilloscope_waveform.csv  # CH1/CH2 waveform export when using oscilloscope mode
-      ├── config.json       # Test configuration
-      ├── log.txt           # Session log
-      └── video.mp4         # Camera recording (manual transfer)
-```
-
-## API Documentation
-
-### REST Endpoints
-
-#### Start Measurement
-```http
-POST /api/start_measurement
-Content-Type: application/json
-
-{
-  "control_source": "api",
-  "config": {
-    "test_name": "test1",
-    "dmm1_visa_id": "USB0::0x05E6::0x2110::...",
-    "dmm2_visa_id": "USB0::0x05E6::0x2110::...",
-    "power_supply_visa_id": "USB0::...",
-    "relay_port": "COM3",
-    "voltage_stages": [
-      {"start_time": 0, "end_time": 5, "voltage": 0.2},
-      {"start_time": 5, "end_time": 10, "voltage": 0.4}
-    ],
-    "relay_ch1_stages": [
-      {"start_time": 0, "end_time": 5, "state": "closed"}
-    ],
-    "relay_ch2_stages": [],
-    "sampling_rate_hz": 10,
-    "dmm_acquisition_mode": "fast",
-    "stop_after_seconds": null,
-    "record_camera": false,
-    "camera_ready_delay_seconds": 0
-  }
-}
-```
-
-`control_source` may be `ui`, `api`, `agent`, or `script`. The browser polls
-`/api/status`, so API-started runs appear in the UI with the active config,
-control source, runtime log, and live plots.
-Set `stop_after_seconds` to a positive elapsed time to stop a run automatically.
-The frontend can load saved session `config.json` files or hand-authored
-experiment config JSON files into the control form.
-
-#### Stop Measurement
-```http
-POST /api/stop_measurement?control_source=api
-```
-
-#### Get Status
-```http
-GET /api/status
-```
-
-The status response includes `active_config`, `control_source`, recent runtime
-`events`, acquisition timing, instrument connection state, and camera state.
-
-#### Save Experiment Config
-```http
-POST /api/experiment_configs/save
-```
-
-Saves the submitted measurement config as JSON under
-`user-data/experiment-configs/`. When no file name is supplied, the API uses
-the sanitized test name.
-
-#### Get Current Session Data
-```http
-GET /api/current_session/data?limit=6000
-```
-
-Returns recent in-memory readings for the active run. The browser uses this to
-backfill plots when it is opened after an API agent or script has already
-started an experiment.
-
-#### Download Latest Camera Recording
-```http
-POST /api/download_latest_camera_recording
-GET /api/download_latest_camera_recording/status
-```
-
-Starts a background transfer of the newest camera movie into the newest
-measurement session folder and returns the current transfer status.
-
-#### List Instruments
-```http
-GET /api/list_instruments
-```
-
-#### List Sessions
-```http
-GET /api/sessions
-```
-
-#### Get Session Data
-```http
-GET /api/session/{session_id}/data
-```
-
-### WebSocket
-
-Connect to `ws://localhost:8000/api/live` for real-time DMM readings:
-
-```javascript
-const ws = new WebSocket('ws://localhost:8000/api/live');
-ws.onmessage = (event) => {
-  const reading = JSON.parse(event.data);
-  // { time: 1.23, dmm1_voltage: 0.45, dmm2_voltage: 0.67 }
-};
-```
-
-## Development Mode
-
-The system can run in development mode without physical instruments:
-
-- **Mock VISA resources**: Backend will simulate instruments if none detected
-- **Mock camera**: Camera service runs in mock mode without C++ executables
-- **Data logging**: CSV logging still works with simulated data
-
-## Project Structure
-
-```
-eca-actuation-test/
-├── camera/                    # Camera control C++ code and service
-│   ├── StartRecord.cpp
-│   ├── StopRecord.cpp
-│   ├── camera_service.py
-│   └── README.md
-├── eca-actuation-test/        # Python backend
-│   ├── instruments/           # Instrument drivers
-│   │   ├── dmm.py
-│   │   ├── power_supply.py
-│   │   └── relay_board.py
-│   ├── app.py                 # FastAPI application
-│   ├── api_models.py          # Pydantic models
-│   ├── camera_controller.py   # Camera service bridge
-│   ├── data_logger.py         # Data logging
-│   └── measurement_controller.py
-├── frontend/                  # Next.js frontend
-│   ├── src/
-│   │   ├── app/              # Next.js app directory
-│   │   ├── components/       # React components
-│   │   │   ├── ui/          # shadcn/ui components
-│   │   │   ├── DMMGraph.tsx
-│   │   │   ├── VoltageStageConfigurator.tsx
-│   │   │   └── RelayStageConfigurator.tsx
-│   │   └── lib/             # Utilities
-│   ├── package.json
-│   └── next.config.js
-├── user-data/                 # Local measurement data (gitignored)
-│   └── sessions/              # Measurement sessions (auto-created)
-├── docs/                      # Documentation
-│   └── PRD.md                # Product Requirements Document
-├── labview/                   # Legacy LabVIEW code
-├── pyproject.toml            # Python dependencies
-└── README.md                 # This file
-```
-
-## Troubleshooting
-
-### Frontend Won't Start / Module Not Found
-
-If you see `Module not found: Can't resolve '@/lib/utils'`:
-
-1. The `frontend/src/lib/utils.ts` file is required for shadcn/ui components
-2. Ensure `npm install` completed successfully in the `frontend/` directory
-3. If the file is missing after cloning, it should be created during first build
-4. Verify the file exists: `frontend/src/lib/utils.ts`
-
-### VISA Connection Issues
-
-If instruments are not detected:
-
-1. Install NI-VISA or compatible driver
-2. Verify instruments appear in NI MAX (National Instruments Measurement & Automation Explorer)
-3. Check USB connections
-4. Restart instruments
-
-### Camera Not Available
-
-The webapp works without the camera in mock mode. To use real camera:
-
-1. Compile C++ executables (see [camera/README.md](camera/README.md))
-2. Ensure Canon EDSDK DLLs are in PATH
-3. Connect camera via USB and power on
-4. Start camera service
-
-### Port Already in Use
-
-If port 8000 or 3000 is busy:
-
-- Backend: Edit `app.py` and change `uvicorn.run(app, port=XXXX)`
-- Frontend: Edit `package.json` dev script: `next dev -p XXXX`
-
-### WebSocket Connection Failed
-
-Ensure backend is running on `localhost:8000` before starting frontend.
-
-## Performance
-
-- **DMM Sampling**: Up to 100 Hz per channel (configurable)
-- **WebSocket Update**: 10 Hz default
-- **Data Logging**: Buffered writes, no data loss
-- **Timing Precision**: <10 ms drift for voltage/relay stages
-
-## Safety Notes
-
-⚠️ **Important Safety Considerations:**
-
-1. **Voltage Limits**: Verify voltage stages are within safe limits for your setup
-2. **Current Protection**: Always set appropriate current limits on power supply
-3. **Emergency Stop**: Stop button immediately halts all operations
-4. **Relay Ratings**: Do not exceed relay board specifications
-5. **Supervision**: Always supervise experiments, especially with new configurations
-
-## Future Enhancements
-
-- [ ] Oscilloscope integration
-- [ ] Function generator support
-- [ ] Cloud data logging
-- [ ] Multi-session comparison and analytics
-- [ ] Real-time impedance measurements
-- [ ] AI-driven experiment optimization
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## License
-
-See [LICENSE](LICENSE) file for details.
-
-## Support
-
-For issues, questions, or suggestions:
-- Open an issue on GitHub
-- Check [docs/PRD.md](docs/PRD.md) for detailed specifications
-
-## Acknowledgments
-
-- Built with FastAPI, Next.js, and shadcn/ui
-- Instrument control via PyVISA and pyserial
-- Camera control via Canon EDSDK
-
----
-
-**Made for electrochemical actuator research and testing**
+## Safety
+
+- Verify voltage stages and current limits before starting hardware runs.
+- Keep the power supply output off until the run starts.
+- Supervise experiments, especially new configurations.
+- Treat camera/electrical sync as acceptable for 50 fps video only when logged offset is under 20 ms.

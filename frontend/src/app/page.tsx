@@ -787,7 +787,7 @@ export default function Home() {
       dmm_acquisition_mode: dmmAcquisitionMode,
       stop_after_seconds: stopAtEnabled ? stopAfterSeconds : null,
       record_camera: recordCamera,
-      auto_download_camera_recording: autoDownloadCameraRecording,
+      auto_download_camera_recording: recordCamera && autoDownloadCameraRecording,
       camera_ready_delay_seconds: cameraReadyDelaySeconds,
     };
   }, [
@@ -1242,11 +1242,11 @@ export default function Home() {
                     <input
                       id="auto-download-camera-recording"
                       type="checkbox"
-                      checked={autoDownloadCameraRecording}
+                      checked={recordCamera && autoDownloadCameraRecording}
                       onChange={(event) =>
                         setAutoDownloadCameraRecording(event.target.checked)
                       }
-                      disabled={isMeasuring || isStarting}
+                      disabled={!recordCamera || isMeasuring || isStarting}
                       className="h-4 w-4 rounded border-input"
                     />
                     <span className="truncate">Auto-download</span>

@@ -1,17 +1,17 @@
 # Camera Service
 
-This directory contains the camera control system for the Canon 2000D DSLR.
+The camera implementation for the Canon 2000D DSLR lives under `camera/`.
 
 ## Components
 
 ### C++ Camera Control
-- `CameraControl.cpp` - Linux EDSDK bridge used by the webapp.
-- `StartRecord.cpp` / `StopRecord.cpp` - Older one-shot examples used by the previous LabVIEW workflow.
+- `camera/CameraControl.cpp` - Linux EDSDK bridge used by the webapp.
+- `camera/StartRecord.cpp` / `camera/StopRecord.cpp` - Older one-shot examples used by the previous LabVIEW workflow.
 
-`CameraControl` can run as a long-lived daemon. The webapp prepares that daemon before the experiment clock starts, then sends the record command at the same boundary where DMM acquisition starts.
+`CameraControl` can run as a long-lived daemon. The webapp prepares that daemon before the experiment clock starts, then sends the record command at the measurement `t0` boundary where electrical acquisition and staged controls start.
 
 ### Python HTTP Bridge
-- `camera_service.py` - FastAPI service that exposes HTTP endpoints for camera control
+- `camera/camera_service.py` - FastAPI service that exposes HTTP endpoints for camera control
 
 ## Compilation (Linux)
 
@@ -54,14 +54,16 @@ cl StopRecord.cpp /I"path\to\EDSDK\Header" /link /LIBPATH:"path\to\EDSDK\Library
 ## Running the Camera Service
 
 ### Development Mode (Mock)
-If the C++ executables are not compiled, the service runs in mock mode:
+If `camera/CameraControl` is not built, the service runs in mock mode:
 ```bash
+cd camera
 python camera_service.py
 ```
 
 ### Production Mode
 After compiling `CameraControl`:
 ```bash
+cd camera
 python camera_service.py
 ```
 
@@ -79,17 +81,27 @@ The service will automatically detect the executable and use it.
 ## Downloading the Latest Recording
 
 Video files are saved on the camera SD card. After a measurement has stopped,
-download the newest movie into the newest session folder:
+download the newest movie into `user-data/big-videos/` and create a CRF 22
+H.264 MP4 in the target session folder:
 
 ```bash
-python scripts/download_latest_camera_recording.py
+uv run python3 scripts/download_latest_camera_recording.py --session-dir user-data/sessions/<session>
 ```
 
 Use `--dry-run` to preview the selected camera file and destination without
-copying. The script writes a JSON sidecar next to the copied movie with the
-source URI, camera timestamp, and local path. If the camera is visible as an
-unmounted GVFS/gphoto volume, the script will mount it automatically before
-copying.
+copying. The script writes a JSON sidecar next to the raw movie with the source
+URI, camera timestamp, and local path. If the camera is visible as an unmounted
+GVFS/gphoto volume, the script will mount it automatically before copying.
+
+The main app can also trigger this path with:
+
+```http
+POST /api/download_latest_camera_recording
+GET /api/download_latest_camera_recording/status
+```
+
+For config-driven auto-download, both `record_camera` and
+`auto_download_camera_recording` must be true.
 
 ## Port
 

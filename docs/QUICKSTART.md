@@ -84,9 +84,9 @@ Navigate to: `http://localhost:3000`
 
 ## First Test
 
-1. Click **"Start Measurement"** (will run in mock mode without instruments)
+1. Click **Start** (will run in mock mode without instruments)
 2. Watch the graphs update in real-time
-3. Click **"Stop Measurement"** to save data
+3. Click **Stop** to save data
 4. Check `user-data/sessions/` folder for saved session
 
 ## Connect Real Instruments
@@ -99,8 +99,8 @@ Once the app is running, the dropdowns will show:
 
 ### 2. Select Instruments
 
-- Choose VISA ID for DMM1
-- Choose VISA ID for DMM2
+- Choose `DMM` or `Oscilloscope` as the measurement source
+- Choose VISA IDs for DMM1/DMM2, or the oscilloscope VISA ID
 - Choose VISA ID for Power Supply
 - Choose Serial Port for Relay Board
 
@@ -120,9 +120,22 @@ Once the app is running, the dropdowns will show:
 
 1. Enter test name
 2. Configure stages
-3. Click "Start Measurement"
-4. Monitor live graphs
-5. Click "Stop Measurement" when done
+3. Set `Camera` and `Ready Delay (s)` in the header if needed
+4. Click `Start`
+5. Monitor live graphs or the oscilloscope screen
+6. Click `Stop` when done, or enable `Auto-stop at (s)`
+
+### 5. Agent/Script Run
+
+Run a saved preset through the same backend controller used by the browser:
+
+```bash
+uv run python3 scripts/run_experiment_config_http.py \
+  step_voltage_relay2_750s_oscilloscope.json \
+  --leave-services-running
+```
+
+Open `http://localhost:3000` at any time to monitor the agent-started run.
 
 ## Data Output
 
@@ -130,10 +143,15 @@ Each measurement creates a folder in `user-data/sessions/` by default. Set `ECA_
 
 ```
 user-data/sessions/2025-10-13_14-30-15_test1/
-├── readings.csv    # DMM readings
-├── config.json     # Test configuration
-└── log.txt        # Session log
+├── readings.csv                         # DMM readings, or timing-only rows in oscilloscope mode
+├── oscilloscope_waveform.csv            # CH1/CH2 waveform export in oscilloscope mode
+├── oscilloscope_waveform_metadata.json  # Scope export metadata
+├── config.json                          # Test configuration
+├── log.txt                              # Session log and timing events
+└── <camera-file>.mp4                    # Downloaded/compressed camera video
 ```
+
+Raw camera movies are stored under `user-data/big-videos/`. Converted MP4s are stored in the session folder.
 
 ## Troubleshooting
 
@@ -143,10 +161,12 @@ user-data/sessions/2025-10-13_14-30-15_test1/
 ```bash
 # Windows
 netstat -ano | findstr :8000
+netstat -ano | findstr :8001
 netstat -ano | findstr :3000
 
 # Linux/Mac
 lsof -i :8000
+lsof -i :8001
 lsof -i :3000
 ```
 
@@ -164,7 +184,7 @@ kill <PID>
 This is normal! The app works in **mock mode** without the camera. Camera is optional for testing.
 
 To enable camera:
-1. Compile C++ executables (see `camera/README.md`)
+1. Build the camera bridge (see [CAMERA.md](CAMERA.md))
 2. Connect Canon camera via USB
 3. Restart camera service
 
@@ -206,10 +226,11 @@ npm run dev
 
 ## Next Steps
 
-1. **Read Full Documentation**: [README.md](README.md)
-2. **Setup Guide**: [SETUP.md](SETUP.md)
-3. **API Documentation**: Visit `http://localhost:8000/docs`
-4. **PRD**: [docs/PRD.md](docs/PRD.md)
+1. **Read Full Documentation**: [README.md](../README.md)
+2. **Operation Contract**: [OPERATION.md](OPERATION.md)
+3. **Setup Guide**: [SETUP.md](SETUP.md)
+4. **API Documentation**: Visit `http://localhost:8000/docs`
+5. **Known Issues**: [KNOWN_ISSUES.md](KNOWN_ISSUES.md)
 
 ## Development Tips
 
@@ -250,9 +271,9 @@ Try endpoints directly in the browser!
 ### Quick Test with Mock Data
 
 1. Start services
-2. Click "Start Measurement"
+2. Click `Start`
 3. Wait 10 seconds
-4. Click "Stop Measurement"
+4. Click `Stop`
 5. Check `user-data/sessions/` folder
 
 ### Test Voltage Stages
@@ -261,7 +282,7 @@ Try endpoints directly in the browser!
    - 0-5s: 0.2V
    - 5-10s: 0.4V
    - 10-15s: 0.6V
-2. Start measurement
+2. Start
 3. Watch power supply change voltage
 
 ### Test Relay Switching
@@ -270,7 +291,7 @@ Try endpoints directly in the browser!
    - 0-5s: closed
    - 5-10s: open
    - 10-15s: closed
-2. Start measurement
+2. Start
 3. Watch relay indicator
 
 ### Record Full Experiment
@@ -278,16 +299,16 @@ Try endpoints directly in the browser!
 1. Connect all instruments
 2. Set up voltage and relay stages
 3. Enter meaningful test name
-4. Start measurement
+4. Start
 5. Let run for desired duration
-6. Stop measurement
+6. Stop
 7. Review data in `user-data/sessions/` folder
 
 ## Performance Notes
 
 - **Sampling Rate**: Default 10 Hz, adjustable 1-100 Hz
 - **Graph Update**: 10 Hz via WebSocket
-- **Max Data Points**: 500 displayed (all logged to CSV)
+- **Max Data Points**: about 6000 displayed live (all logged to CSV)
 - **File Size**: ~10 KB per minute at 10 Hz
 
 ## Stopping Services
@@ -334,4 +355,4 @@ Press `Ctrl+C` in each terminal window where services are running.
 
 **You're ready to start testing!** 🚀
 
-For detailed documentation, see [README.md](README.md)
+For detailed documentation, see [README.md](../README.md)
