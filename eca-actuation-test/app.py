@@ -45,6 +45,7 @@ EXPERIMENT_CONFIG_DIR = REPO_ROOT / "user-data" / "experiment-configs"
 _camera_download_task: asyncio.Task | None = None
 _camera_download_process: asyncio.subprocess.Process | None = None
 _camera_download_status = CameraDownloadStatus().model_dump()
+_auto_download_watch_task: asyncio.Task | None = None
 
 
 def _now_iso() -> str:
@@ -117,12 +118,51 @@ def _experiment_config_path(file_name: str) -> Path:
     return resolved_path
 
 
-async def _run_camera_download():
+def _should_auto_download_camera(config: MeasurementConfig) -> bool:
+    return bool(config.record_camera and config.auto_download_camera_recording)
+
+
+def _start_camera_download_task(
+    session_dir: str | Path | None = None,
+    message: str = "Downloading raw camera recording and converting to MP4",
+) -> dict:
+    """Start the camera transfer helper and expose progress through status."""
+    global _camera_download_task
+
+    if _camera_download_task and not _camera_download_task.done():
+        return _camera_download_status
+
+    if not CAMERA_DOWNLOAD_SCRIPT.exists():
+        raise RuntimeError("Camera download helper script is missing.")
+
+    session_dir_text = str(session_dir) if session_dir is not None else None
+    _set_camera_download_status(
+        is_running=True,
+        started_at=_now_iso(),
+        finished_at=None,
+        success=None,
+        message=message,
+        session_dir=session_dir_text,
+        camera_file=None,
+        raw_destination=None,
+        destination=None,
+        raw_metadata_path=None,
+        metadata_path=None,
+        source_size_bytes=None,
+        returncode=None,
+    )
+    _camera_download_task = asyncio.create_task(_run_camera_download(session_dir=session_dir))
+    return _camera_download_status
+
+
+async def _run_camera_download(session_dir: str | Path | None = None):
     """Run the camera transfer helper without blocking the API event loop."""
     global _camera_download_process
 
     try:
         command = [sys.executable, str(CAMERA_DOWNLOAD_SCRIPT)]
+        if session_dir is not None:
+            command.extend(["--session-dir", str(session_dir)])
         env = os.environ.copy()
         _camera_download_process = await asyncio.create_subprocess_exec(
             *command,
@@ -184,6 +224,54 @@ async def _run_camera_download():
         _camera_download_process = None
 
 
+async def _auto_download_after_measurement(session_id: str, session_dir: Path):
+    """Wait for a session to finish, then download/convert its camera recording."""
+    try:
+        while controller.current_session_id == session_id:
+            await asyncio.sleep(1.0)
+
+        await asyncio.sleep(0.5)
+        if controller.current_session_id is not None or controller.is_measuring:
+            logger.warning(
+                "Skipping auto camera download for %s because another measurement is active",
+                session_id,
+            )
+            return
+
+        if controller.camera.is_recording:
+            logger.warning(
+                "Skipping auto camera download for %s because the camera is still recording",
+                session_id,
+            )
+            return
+
+        _start_camera_download_task(
+            session_dir=session_dir,
+            message="Auto-downloading raw camera recording and converting to MP4",
+        )
+        logger.info("Auto camera download started for session %s", session_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error("Auto camera download failed to start for %s: %s", session_id, exc)
+
+
+def _arm_auto_camera_download(session_id: str, config: MeasurementConfig):
+    """Arm the post-run camera transfer if the measurement config asks for it."""
+    global _auto_download_watch_task
+
+    if _auto_download_watch_task and not _auto_download_watch_task.done():
+        _auto_download_watch_task.cancel()
+
+    if not _should_auto_download_camera(config):
+        return
+
+    session_dir = controller.data_logger.base_data_dir / session_id
+    _auto_download_watch_task = asyncio.create_task(
+        _auto_download_after_measurement(session_id, session_dir)
+    )
+
+
 async def refresh_camera_availability(force: bool = False):
     """Refresh camera availability without making every status poll hit the camera service."""
     global _last_camera_status_check
@@ -205,6 +293,13 @@ async def lifespan(app: FastAPI):
     
     # Cleanup
     logger.info("Shutting down...")
+    if _auto_download_watch_task and not _auto_download_watch_task.done():
+        _auto_download_watch_task.cancel()
+        try:
+            await _auto_download_watch_task
+        except asyncio.CancelledError:
+            pass
+
     if _camera_download_task and not _camera_download_task.done():
         _camera_download_task.cancel()
         try:
@@ -267,6 +362,7 @@ async def start_measurement(request: StartMeasurementRequest):
             request.config,
             control_source=request.control_source,
         )
+        _arm_auto_camera_download(session_id, request.config)
         return {
             "success": True,
             "session_id": session_id,
@@ -331,6 +427,7 @@ async def start_experiment_config(
             config,
             control_source=control_source,
         )
+        _arm_auto_camera_download(session_id, config)
         return {
             "success": True,
             "session_id": session_id,
@@ -496,37 +593,16 @@ async def download_latest_camera_recording():
     """
     Start downloading the newest camera movie into the newest measurement session.
     """
-    global _camera_download_task
-
-    if _camera_download_task and not _camera_download_task.done():
-        return _camera_download_status
-
     if controller.is_measuring or controller.camera.is_recording:
         raise HTTPException(
             status_code=400,
             detail="Stop the measurement and camera recording before downloading.",
         )
 
-    if not CAMERA_DOWNLOAD_SCRIPT.exists():
-        raise HTTPException(status_code=500, detail="Camera download helper script is missing.")
-
-    _set_camera_download_status(
-        is_running=True,
-        started_at=_now_iso(),
-        finished_at=None,
-        success=None,
-        message="Downloading raw camera recording and converting to MP4",
-        session_dir=None,
-        camera_file=None,
-        raw_destination=None,
-        destination=None,
-        raw_metadata_path=None,
-        metadata_path=None,
-        source_size_bytes=None,
-        returncode=None,
-    )
-    _camera_download_task = asyncio.create_task(_run_camera_download())
-    return _camera_download_status
+    try:
+        return _start_camera_download_task()
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get(

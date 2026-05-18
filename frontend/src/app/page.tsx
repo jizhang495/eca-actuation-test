@@ -58,6 +58,7 @@ interface MeasurementConfig {
   dmm_acquisition_mode?: DmmAcquisitionMode;
   stop_after_seconds?: number | null;
   record_camera: boolean;
+  auto_download_camera_recording: boolean;
   camera_ready_delay_seconds: number;
 }
 
@@ -225,6 +226,11 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
     dmm_acquisition_mode: dmmAcquisitionMode,
     stop_after_seconds: stopAfterSeconds,
     record_camera: readBoolean(configValue.record_camera, false, "record_camera"),
+    auto_download_camera_recording: readBoolean(
+      configValue.auto_download_camera_recording,
+      false,
+      "auto_download_camera_recording"
+    ),
     camera_ready_delay_seconds: readNumber(
       configValue.camera_ready_delay_seconds,
       1,
@@ -368,6 +374,7 @@ export default function Home() {
   const [stopAtEnabled, setStopAtEnabled] = useState(false);
   const [stopAfterSeconds, setStopAfterSeconds] = useState(750);
   const [recordCamera, setRecordCamera] = useState(false);
+  const [autoDownloadCameraRecording, setAutoDownloadCameraRecording] = useState(false);
   const [cameraReadyDelaySeconds, setCameraReadyDelaySeconds] = useState(1);
   const [loadedConfigName, setLoadedConfigName] = useState<string | null>(null);
   const [configLoadError, setConfigLoadError] = useState<string | null>(null);
@@ -459,6 +466,7 @@ export default function Home() {
     );
     setStopAfterSeconds(config.stop_after_seconds ?? 750);
     setRecordCamera(Boolean(config.record_camera));
+    setAutoDownloadCameraRecording(Boolean(config.auto_download_camera_recording));
     setCameraReadyDelaySeconds(config.camera_ready_delay_seconds ?? 0);
   }, []);
 
@@ -635,9 +643,8 @@ export default function Home() {
   }, [fetchInstruments, fetchStatus, fetchCameraDownloadStatus]);
 
   useEffect(() => {
-    if (!cameraDownloadStatus?.is_running) return;
-
-    const downloadTimer = window.setInterval(fetchCameraDownloadStatus, 2000);
+    const pollMs = cameraDownloadStatus?.is_running ? 2000 : 5000;
+    const downloadTimer = window.setInterval(fetchCameraDownloadStatus, pollMs);
     return () => window.clearInterval(downloadTimer);
   }, [cameraDownloadStatus?.is_running, fetchCameraDownloadStatus]);
 
@@ -780,9 +787,11 @@ export default function Home() {
       dmm_acquisition_mode: dmmAcquisitionMode,
       stop_after_seconds: stopAtEnabled ? stopAfterSeconds : null,
       record_camera: recordCamera,
-      camera_ready_delay_seconds: recordCamera ? cameraReadyDelaySeconds : 0,
+      auto_download_camera_recording: autoDownloadCameraRecording,
+      camera_ready_delay_seconds: cameraReadyDelaySeconds,
     };
   }, [
+    autoDownloadCameraRecording,
     cameraReadyDelaySeconds,
     dmm1Visa,
     dmm2Visa,
@@ -918,6 +927,13 @@ export default function Home() {
   const cameraDownloadMessage = cameraDownloadStatus?.destination
     ? `${cameraDownloadStatus.message}: ${cameraDownloadStatus.destination}`
     : cameraDownloadStatus?.message || "No transfer started";
+  const showCameraDownloadMessage = Boolean(
+    cameraDownloadStatus &&
+      (cameraDownloadStatus.is_running ||
+        (cameraDownloadStatus.success !== null && cameraDownloadStatus.success !== undefined) ||
+        cameraDownloadStatus.destination ||
+        cameraDownloadStatus.raw_destination)
+  );
   const cameraDownloadDisabled =
     isMeasuring || isStarting || cameraStatus.recording || isCameraDownloadRunning;
 
@@ -934,39 +950,65 @@ export default function Home() {
               Electrochemical Actuator Testing and Control
             </p>
           </div>
-          <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-[auto_14rem_14rem] sm:items-center sm:justify-start xl:grid-cols-[auto_auto_auto_auto]">
-            {/* Camera Status */}
-            <div className="flex min-w-0 items-center gap-2 text-sm">
+          <div className="grid w-full gap-3 sm:w-auto sm:grid-cols-[auto_8rem_5rem_auto_auto] sm:items-end sm:justify-start">
+            <label
+              htmlFor="header-record-camera"
+              className="flex h-10 min-w-0 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm font-medium has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+            >
+              <input
+                id="header-record-camera"
+                type="checkbox"
+                checked={recordCamera}
+                onChange={(event) => setRecordCamera(event.target.checked)}
+                disabled={isMeasuring || isStarting}
+                className="h-4 w-4 rounded border-input"
+              />
               {cameraStatus.recording ? (
-                <Video className="h-5 w-5 text-red-500 animate-pulse" />
+                <Video className="h-4 w-4 shrink-0 text-red-500" />
               ) : (
-                <VideoOff className="h-5 w-5 text-muted-foreground" />
+                <VideoOff className="h-4 w-4 shrink-0 text-muted-foreground" />
               )}
-              <span className="truncate">
-                {cameraStatus.recording ? "Recording" : "Camera Idle"}
-              </span>
+              <span className="truncate">Camera</span>
+            </label>
+
+            <div className="space-y-1">
+              <Label
+                htmlFor="ready-delay-seconds"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                Ready Delay (s)
+              </Label>
+              <Input
+                id="ready-delay-seconds"
+                type="number"
+                value={cameraReadyDelaySeconds}
+                onChange={(event) =>
+                  setCameraReadyDelaySeconds(Math.max(0, parseFloat(event.target.value) || 0))
+                }
+                disabled={isMeasuring || isStarting}
+                min={0}
+                max={30}
+                step={0.1}
+                className="h-10"
+              />
             </div>
 
-            {/* Elapsed Time */}
-            {isMeasuring && (
-              <div className="text-sm font-mono sm:justify-self-end xl:justify-self-auto">
-                {elapsedTime.toFixed(3)} s
-              </div>
-            )}
+            <div className="flex h-10 min-w-20 items-center text-sm font-mono text-muted-foreground">
+              {isMeasuring ? `${elapsedTime.toFixed(3)} s` : null}
+            </div>
 
-            {/* Start/Stop Buttons */}
             <Button
               onClick={handleStartMeasurement}
               disabled={isMeasuring || isStarting}
               size="lg"
-              className="min-w-0 gap-2 px-4 sm:col-start-2 xl:col-start-auto"
+              className="min-w-0 gap-2 px-4"
             >
               {isStarting ? (
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
               ) : (
                 <Play className="h-4 w-4 shrink-0" />
               )}
-              <span className="truncate">{isStarting ? "Starting" : "Start Measurement"}</span>
+              <span className="truncate">{isStarting ? "Starting" : "Start"}</span>
             </Button>
             <Button
               onClick={handleStopMeasurement}
@@ -976,7 +1018,7 @@ export default function Home() {
               className="min-w-0 gap-2 px-4"
             >
               <Square className="h-4 w-4 shrink-0" />
-              <span className="truncate">Stop Measurement</span>
+              <span className="truncate">Stop</span>
             </Button>
           </div>
         </div>
@@ -1117,29 +1159,15 @@ export default function Home() {
                     />
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
-                  <div className="min-w-0">
-                    <Label className="text-sm font-medium">Config file</Label>
-                    <div
-                      className={
-                        configLoadError
-                          ? "truncate text-xs text-destructive"
-                          : "truncate text-xs text-muted-foreground"
-                      }
-                    >
-                      {configLoadError ||
-                        (isSavingConfig ? "Saving..." : loadedConfigName) ||
-                        "No config loaded"}
-                    </div>
-                  </div>
-                  <input
-                    ref={configFileInputRef}
-                    type="file"
-                    accept="application/json,.json"
-                    onChange={handleConfigFileChange}
-                    disabled={isMeasuring || isStarting}
-                    className="hidden"
-                  />
+                <input
+                  ref={configFileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={handleConfigFileChange}
+                  disabled={isMeasuring || isStarting}
+                  className="hidden"
+                />
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -1165,8 +1193,23 @@ export default function Home() {
                     Load Config
                   </Button>
                 </div>
-                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_8rem] sm:items-center">
-                  <div className="flex min-w-0 items-center gap-3">
+                {(configLoadError || isSavingConfig || loadedConfigName) && (
+                  <div
+                    className={
+                      configLoadError
+                        ? "mt-2 truncate text-xs text-destructive"
+                        : "mt-2 truncate text-xs text-muted-foreground"
+                    }
+                  >
+                    {configLoadError || (isSavingConfig ? "Saving..." : loadedConfigName)}
+                  </div>
+                )}
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_8rem] sm:items-center">
+                  <label
+                    htmlFor="stop-at-enabled"
+                    className="flex min-w-0 cursor-pointer items-center gap-3 text-sm font-medium has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+                  >
                     <input
                       id="stop-at-enabled"
                       type="checkbox"
@@ -1175,92 +1218,39 @@ export default function Home() {
                       disabled={isMeasuring || isStarting}
                       className="h-4 w-4 rounded border-input"
                     />
-                    <div className="min-w-0">
-                      <Label htmlFor="stop-at-enabled" className="text-sm font-medium">
-                        Auto stop
-                      </Label>
-                      <div className="text-xs text-muted-foreground">
-                        {stopAtEnabled ? `${stopAfterSeconds} s` : "Manual stop"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label
-                      htmlFor="stop-after-seconds"
-                      className="text-xs uppercase tracking-wide text-muted-foreground"
-                    >
-                      Stop At (s)
-                    </Label>
-                    <Input
-                      id="stop-after-seconds"
-                      type="number"
-                      value={stopAfterSeconds}
-                      onChange={(event) =>
-                        setStopAfterSeconds(Math.max(0, parseFloat(event.target.value) || 0))
-                      }
-                      disabled={!stopAtEnabled || isMeasuring || isStarting}
-                      min={0.1}
-                      step={0.1}
-                      className="h-9"
-                    />
-                  </div>
+                    <span className="truncate">Auto-stop at (s)</span>
+                  </label>
+                  <Input
+                    id="stop-after-seconds"
+                    type="number"
+                    value={stopAfterSeconds}
+                    onChange={(event) =>
+                      setStopAfterSeconds(Math.max(0, parseFloat(event.target.value) || 0))
+                    }
+                    disabled={!stopAtEnabled || isMeasuring || isStarting}
+                    min={0.1}
+                    step={0.1}
+                    className="h-9"
+                  />
                 </div>
-                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_8rem] sm:items-center">
-                  <div className="flex min-w-0 items-center gap-3">
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                  <label
+                    htmlFor="auto-download-camera-recording"
+                    className="flex min-w-0 cursor-pointer items-center gap-3 text-sm font-medium has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+                  >
                     <input
-                      id="record-camera"
+                      id="auto-download-camera-recording"
                       type="checkbox"
-                      checked={recordCamera}
-                      onChange={(event) => setRecordCamera(event.target.checked)}
+                      checked={autoDownloadCameraRecording}
+                      onChange={(event) =>
+                        setAutoDownloadCameraRecording(event.target.checked)
+                      }
                       disabled={isMeasuring || isStarting}
                       className="h-4 w-4 rounded border-input"
                     />
-                    <div className="min-w-0">
-                      <Label htmlFor="record-camera" className="text-sm font-medium">
-                        Record camera
-                      </Label>
-                      <div className="text-xs text-muted-foreground">
-                        {cameraStatus.available ? "Camera service ready" : "Camera unavailable"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <Label
-                      htmlFor="camera-ready-delay"
-                      className="text-xs uppercase tracking-wide text-muted-foreground"
-                    >
-                      Ready Delay (s)
-                    </Label>
-                    <Input
-                      id="camera-ready-delay"
-                      type="number"
-                      value={cameraReadyDelaySeconds}
-                      onChange={(event) =>
-                        setCameraReadyDelaySeconds(
-                          Math.max(0, parseFloat(event.target.value) || 0)
-                        )
-                      }
-                      disabled={!recordCamera || isMeasuring || isStarting}
-                      min={0}
-                      max={30}
-                      step={0.1}
-                      className="h-9"
-                    />
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-3 rounded-md border border-border px-3 py-2 sm:grid-cols-[1fr_auto] sm:items-center">
-                  <div className="min-w-0">
-                    <Label className="text-sm font-medium">Latest recording</Label>
-                    <div
-                      className={
-                        cameraDownloadStatus?.success === false
-                          ? "truncate text-xs text-destructive"
-                          : "truncate text-xs text-muted-foreground"
-                      }
-                    >
-                      {cameraDownloadMessage}
-                    </div>
-                  </div>
+                    <span className="truncate">Auto-download</span>
+                  </label>
                   <Button
                     type="button"
                     variant="outline"
@@ -1273,9 +1263,20 @@ export default function Home() {
                     ) : (
                       <Download className="h-4 w-4" />
                     )}
-                    {isCameraDownloadRunning ? "Downloading" : "Download & Convert"}
+                    {isCameraDownloadRunning ? "Downloading" : "Download & Compress"}
                   </Button>
                 </div>
+                {showCameraDownloadMessage && (
+                  <div
+                    className={
+                      cameraDownloadStatus?.success === false
+                        ? "mt-2 truncate text-xs text-destructive"
+                        : "mt-2 truncate text-xs text-muted-foreground"
+                    }
+                  >
+                    {cameraDownloadMessage}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

@@ -95,5 +95,6 @@
   "dmm_acquisition_mode": "low_noise",
   "stop_after_seconds": 750.0,
   "record_camera": true,
+  "auto_download_camera_recording": true,
   "camera_ready_delay_seconds": 2.0
 }

@@ -48,9 +48,13 @@ class MeasurementConfig(BaseModel):
         gt=0,
     )
     record_camera: bool = Field(default=False, description="Start camera recording with measurement")
+    auto_download_camera_recording: bool = Field(
+        default=False,
+        description="Download the camera recording and convert it after measurement",
+    )
     camera_ready_delay_seconds: float = Field(
         default=1.0,
-        description="Seconds to wait after camera prepare before synchronized t0",
+        description="Seconds to wait after hardware prepare before synchronized t0",
         ge=0,
         le=30,
     )

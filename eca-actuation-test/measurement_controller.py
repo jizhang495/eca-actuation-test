@@ -164,9 +164,15 @@ class MeasurementController:
 
             self._record_camera_for_session = False
             if config.record_camera:
-                await self._prepare_camera_for_sync(config.camera_ready_delay_seconds)
+                await self._prepare_camera_for_sync()
             else:
                 self._record_event("Camera recording disabled")
+
+            if config.measurement_source == "oscilloscope" and self.oscilloscope.is_connected:
+                await asyncio.to_thread(self.oscilloscope.start_acquisition)
+                self._record_event("Oscilloscope acquisition started")
+
+            await self._apply_ready_delay(config.camera_ready_delay_seconds)
         except Exception as e:
             logger.error(f"Failed to start measurement: {e}")
             self._record_event(f"Failed to start measurement: {e}", kind="error")
@@ -219,8 +225,6 @@ class MeasurementController:
         if config.measurement_source == "dmm":
             self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
         elif self.oscilloscope.is_connected:
-            await asyncio.to_thread(self.oscilloscope.start_acquisition)
-            self._record_event("Oscilloscope acquisition started")
             self._record_event(
                 "Oscilloscope CH1/CH2 full-record data will be exported to "
                 "oscilloscope_waveform.csv at stop; readings.csv is timing-only "
@@ -299,7 +303,7 @@ class MeasurementController:
         if log:
             self.data_logger.append_log(message)
 
-    async def _prepare_camera_for_sync(self, ready_delay_seconds: float):
+    async def _prepare_camera_for_sync(self):
         """Prepare the camera before t0 without starting recording."""
         camera_prepared = await self.camera.prepare()
         if not camera_prepared:
@@ -312,8 +316,10 @@ class MeasurementController:
         self._record_event("Camera prepared")
         self._record_camera_for_session = True
 
+    async def _apply_ready_delay(self, ready_delay_seconds: float):
+        """Wait after hardware prepare so t0 starts from a settled ready state."""
         if ready_delay_seconds > 0:
-            self._record_event(f"Camera ready delay {ready_delay_seconds:.3f} s")
+            self._record_event(f"Ready delay {ready_delay_seconds:.3f} s")
             await asyncio.sleep(ready_delay_seconds)
 
     async def _log_camera_start_result(
@@ -841,7 +847,8 @@ class MeasurementController:
         candidates.extend(stage.end_time for stage in config.relay_ch2_stages)
 
         duration = max(candidates, default=0.0)
-        return duration if duration > 0 else None
+        ready_delay = max(0.0, config.camera_ready_delay_seconds)
+        return duration + ready_delay if duration > 0 else None
 
     async def _prime_voltage_reads(self, measurement_source: str):
         """Perform one unlogged read so setup latency does not hit sample 0."""
