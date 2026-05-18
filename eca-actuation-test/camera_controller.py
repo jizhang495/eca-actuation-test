@@ -26,6 +26,7 @@ class CameraController:
         self._is_recording = False
         self._is_available = False
         self._last_command_elapsed_us: Optional[int] = None
+        self._last_timing: dict = {}
 
     async def check_availability(self) -> bool:
         """
@@ -42,6 +43,7 @@ class CameraController:
                     data = response.json()
                     self._is_recording = data.get("is_recording", False)
                     self._last_command_elapsed_us = data.get("last_command_elapsed_us")
+                    self._last_timing = self._extract_timing(data)
                 return self._is_available
         except Exception as e:
             logger.warning(f"Camera service not available: {e}")
@@ -88,6 +90,7 @@ class CameraController:
                     self._is_recording = True
                     self._is_available = True
                     self._last_command_elapsed_us = data.get("elapsed_us")
+                    self._last_timing = self._extract_timing(data)
                     logger.info("Camera recording started")
                     return True
                 else:
@@ -115,6 +118,7 @@ class CameraController:
                     data = response.json()
                     self._is_recording = False
                     self._last_command_elapsed_us = data.get("elapsed_us")
+                    self._last_timing = self._extract_timing(data)
                     logger.info("Camera recording stopped")
                     return True
                 else:
@@ -137,6 +141,7 @@ class CameraController:
             "is_recording": self._is_recording,
             "is_available": self._is_available,
             "last_command_elapsed_us": self._last_command_elapsed_us,
+            "timing": self._last_timing,
         }
 
     @property
@@ -153,3 +158,22 @@ class CameraController:
     def last_command_elapsed_us(self) -> Optional[int]:
         """Last camera command duration reported by the camera service."""
         return self._last_command_elapsed_us
+
+    @staticmethod
+    def _extract_timing(payload: dict) -> dict:
+        keys = (
+            "last_request_received_epoch_us",
+            "last_command_write_epoch_us",
+            "last_command_flush_epoch_us",
+            "last_response_epoch_us",
+            "last_http_elapsed_us",
+            "last_daemon_received_epoch_us",
+            "last_daemon_completed_epoch_us",
+            "last_daemon_line",
+        )
+        return {key: payload.get(key) for key in keys if key in payload}
+
+    @property
+    def last_timing(self) -> dict:
+        """Last timing payload reported by the camera service."""
+        return self._last_timing.copy()

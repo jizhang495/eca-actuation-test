@@ -102,7 +102,9 @@ interface CameraDownloadStatus {
   message: string;
   session_dir?: string | null;
   camera_file?: string | null;
+  raw_destination?: string | null;
   destination?: string | null;
+  raw_metadata_path?: string | null;
   metadata_path?: string | null;
   source_size_bytes?: number | null;
   returncode?: number | null;
@@ -913,7 +915,9 @@ export default function Home() {
             ? "API"
             : "Idle";
   const isCameraDownloadRunning = Boolean(cameraDownloadStatus?.is_running);
-  const cameraDownloadMessage = cameraDownloadStatus?.message || "No transfer started";
+  const cameraDownloadMessage = cameraDownloadStatus?.destination
+    ? `${cameraDownloadStatus.message}: ${cameraDownloadStatus.destination}`
+    : cameraDownloadStatus?.message || "No transfer started";
   const cameraDownloadDisabled =
     isMeasuring || isStarting || cameraStatus.recording || isCameraDownloadRunning;
 
@@ -1269,7 +1273,7 @@ export default function Home() {
                     ) : (
                       <Download className="h-4 w-4" />
                     )}
-                    {isCameraDownloadRunning ? "Downloading" : "Download Recording"}
+                    {isCameraDownloadRunning ? "Downloading" : "Download & Convert"}
                   </Button>
                 </div>
               </CardContent>

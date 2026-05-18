@@ -3,6 +3,7 @@
 import csv
 import json
 import logging
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,15 @@ DEFAULT_DATA_DIR = REPO_ROOT / "user-data" / "sessions"
 MAX_SESSION_DATA_POINTS = 10000
 CSV_FLUSH_EVERY_ROWS = 100
 CSV_FLUSH_INTERVAL_SECONDS = 0.5
+OSCILLOSCOPE_WAVEFORM_FIELDNAMES = [
+    "time",
+    "scope_time",
+    "ch1_voltage",
+    "ch2_voltage",
+    "sample_index",
+    "ch1_sample_index",
+    "ch2_sample_index",
+]
 
 
 def _resolve_data_dir(base_data_dir: str | Path | None = None) -> Path:
@@ -235,30 +245,141 @@ class DataLogger:
             self.current_session_dir / "oscilloscope_waveform_metadata.json"
         )
 
-        rows = waveform.get("rows", [])
         metadata = waveform.get("metadata", {})
 
         with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(
                 f,
-                fieldnames=[
-                    "time",
-                    "scope_time",
-                    "ch1_voltage",
-                    "ch2_voltage",
-                    "sample_index",
-                    "ch1_sample_index",
-                    "ch2_sample_index",
-                ],
+                fieldnames=OSCILLOSCOPE_WAVEFORM_FIELDNAMES,
             )
             writer.writeheader()
-            writer.writerows(rows)
+            rows = waveform.get("rows")
+            if rows is not None:
+                rows_written = 0
+                first_time = None
+                last_time = None
+                for row in rows:
+                    writer.writerow(row)
+                    rows_written += 1
+                    time_value = row.get("time")
+                    if isinstance(time_value, (int, float)):
+                        first_time = time_value if first_time is None else min(first_time, time_value)
+                        last_time = time_value if last_time is None else max(last_time, time_value)
+                metadata.setdefault("exported_rows", rows_written)
+                if first_time is not None and last_time is not None:
+                    metadata.setdefault("first_aligned_time", first_time)
+                    metadata.setdefault("last_aligned_time", last_time)
+                    metadata.setdefault("waveform_coverage_seconds", max(0.0, last_time - first_time))
+            else:
+                self._write_streamed_oscilloscope_rows(writer, waveform, metadata)
 
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2)
 
         logger.info("Oscilloscope waveform saved: %s", csv_path)
         return csv_path, metadata_path
+
+    def _write_streamed_oscilloscope_rows(
+        self,
+        writer: csv.DictWriter,
+        waveform: dict,
+        metadata: dict,
+    ) -> None:
+        """Write raw oscilloscope channel data without building row dicts in memory."""
+        channels = waveform.get("channels", {})
+        ch1 = channels.get(1) or channels.get("1")
+        ch2 = channels.get(2) or channels.get("2")
+        ch1_values = ch1.get("raw_values", []) if ch1 else []
+        ch2_values = ch2.get("raw_values", []) if ch2 else []
+        sample_count = max(len(ch1_values), len(ch2_values))
+
+        x_increment = None
+        if ch1:
+            x_increment = ch1.get("x_increment")
+        elif ch2:
+            x_increment = ch2.get("x_increment")
+
+        stop_elapsed_seconds = metadata.get("stop_elapsed_seconds")
+        rows_written = 0
+        cropped_before_t0 = 0
+        first_time = None
+        last_time = None
+
+        for sample_index in range(sample_count):
+            samples_from_end = sample_count - 1 - sample_index
+            aligned_time = None
+            if (
+                isinstance(stop_elapsed_seconds, (int, float))
+                and isinstance(x_increment, (int, float))
+            ):
+                aligned_time = stop_elapsed_seconds - samples_from_end * x_increment
+                if aligned_time < 0:
+                    cropped_before_t0 += 1
+                    continue
+
+            ch1_index = sample_index - (sample_count - len(ch1_values))
+            ch2_index = sample_index - (sample_count - len(ch2_values))
+            scope_time = None
+            if ch1 and 0 <= ch1_index < len(ch1_values):
+                scope_time = self._oscilloscope_scope_time(ch1, ch1_index)
+            elif ch2 and 0 <= ch2_index < len(ch2_values):
+                scope_time = self._oscilloscope_scope_time(ch2, ch2_index)
+
+            writer.writerow(
+                {
+                    "time": aligned_time,
+                    "scope_time": scope_time,
+                    "ch1_voltage": (
+                        self._oscilloscope_voltage(ch1, ch1_index)
+                        if ch1 and 0 <= ch1_index < len(ch1_values)
+                        else None
+                    ),
+                    "ch2_voltage": (
+                        self._oscilloscope_voltage(ch2, ch2_index)
+                        if ch2 and 0 <= ch2_index < len(ch2_values)
+                        else None
+                    ),
+                    "sample_index": rows_written,
+                    "ch1_sample_index": ch1_index if 0 <= ch1_index < len(ch1_values) else None,
+                    "ch2_sample_index": ch2_index if 0 <= ch2_index < len(ch2_values) else None,
+                }
+            )
+            rows_written += 1
+
+            if isinstance(aligned_time, (int, float)):
+                first_time = aligned_time if first_time is None else min(first_time, aligned_time)
+                last_time = aligned_time if last_time is None else max(last_time, aligned_time)
+
+        metadata["exported_rows"] = rows_written
+        metadata["cropped_rows_before_t0"] = cropped_before_t0
+        metadata["raw_combined_rows"] = sample_count
+        if first_time is not None and last_time is not None:
+            metadata["first_aligned_time"] = first_time
+            metadata["last_aligned_time"] = last_time
+            metadata["waveform_coverage_seconds"] = max(0.0, last_time - first_time)
+
+    @staticmethod
+    def _oscilloscope_voltage(channel: dict, sample_index: int) -> Optional[float]:
+        metadata = channel.get("metadata", {})
+        raw_value = channel["raw_values"][sample_index]
+        voltage = (
+            (raw_value - metadata.get("y_offset", 0.0))
+            * metadata.get("y_multiplier", 1.0)
+            + metadata.get("y_zero", 0.0)
+        )
+        return voltage if math.isfinite(voltage) else None
+
+    @staticmethod
+    def _oscilloscope_scope_time(channel: dict, sample_index: int) -> Optional[float]:
+        metadata = channel.get("metadata", {})
+        x_increment = metadata.get("x_increment")
+        x_zero = metadata.get("x_zero")
+        point_offset = metadata.get("point_offset", 0.0)
+        data_start = metadata.get("data_start", 1)
+        if not isinstance(x_increment, (int, float)) or not isinstance(x_zero, (int, float)):
+            return None
+
+        return x_zero + ((data_start - 1 + sample_index) - point_offset) * x_increment
 
     @staticmethod
     def _format_optional_float(value: Optional[float], digits: int) -> str:

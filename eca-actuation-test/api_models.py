@@ -126,6 +126,7 @@ class SystemStatus(BaseModel):
     is_measuring: bool
     camera_recording: bool
     camera_available: bool
+    camera_timing: dict = Field(default_factory=dict)
     session_id: Optional[str] = None
     instruments: list[InstrumentStatus]
     elapsed_time: Optional[float] = None
@@ -183,7 +184,9 @@ class CameraDownloadStatus(BaseModel):
     message: str = "No camera download has been started"
     session_dir: Optional[str] = None
     camera_file: Optional[str] = None
+    raw_destination: Optional[str] = None
     destination: Optional[str] = None
+    raw_metadata_path: Optional[str] = None
     metadata_path: Optional[str] = None
     source_size_bytes: Optional[int] = None
     returncode: Optional[int] = None

@@ -13,6 +13,7 @@ import logging
 import subprocess
 import os
 import queue
+import re
 import shutil
 import threading
 import time
@@ -46,6 +47,14 @@ camera_state = {
     "is_available": False,
     "mock_mode": False,
     "last_command_elapsed_us": None,
+    "last_request_received_epoch_us": None,
+    "last_command_write_epoch_us": None,
+    "last_command_flush_epoch_us": None,
+    "last_response_epoch_us": None,
+    "last_http_elapsed_us": None,
+    "last_daemon_received_epoch_us": None,
+    "last_daemon_completed_epoch_us": None,
+    "last_daemon_line": None,
 }
 
 # Path to C++ executables (to be compiled)
@@ -62,6 +71,18 @@ class CameraStatus(BaseModel):
     is_available: bool
     mock_mode: bool = False
     last_command_elapsed_us: int | None = None
+    last_request_received_epoch_us: int | None = None
+    last_command_write_epoch_us: int | None = None
+    last_command_flush_epoch_us: int | None = None
+    last_response_epoch_us: int | None = None
+    last_http_elapsed_us: int | None = None
+    last_daemon_received_epoch_us: int | None = None
+    last_daemon_completed_epoch_us: int | None = None
+    last_daemon_line: str | None = None
+
+
+def epoch_us() -> int:
+    return int(time.time() * 1_000_000)
 
 
 class CameraDaemon:
@@ -168,16 +189,28 @@ class CameraDaemon:
             return self.process is not None and self.process.poll() is None
 
     def command(self, command: str, timeout: float = 5.0) -> str:
+        return self.command_with_timing(command, timeout=timeout)["line"]
+
+    def command_with_timing(self, command: str, timeout: float = 5.0) -> dict:
         self.ensure_started()
 
         with self.lock:
             if not self.process or not self.process.stdin or not self.process.stdout:
                 raise RuntimeError("Camera daemon is not running")
 
+            command_write_epoch_us = epoch_us()
             self.process.stdin.write(f"{command}\n")
             self.process.stdin.flush()
+            command_flush_epoch_us = epoch_us()
 
-            return self._read_line(timeout=timeout)
+            line = self._read_line(timeout=timeout)
+            response_epoch_us = epoch_us()
+            return {
+                "line": line,
+                "command_write_epoch_us": command_write_epoch_us,
+                "command_flush_epoch_us": command_flush_epoch_us,
+                "response_epoch_us": response_epoch_us,
+            }
 
     def _read_line(self, timeout: float) -> str:
         try:
@@ -237,6 +270,69 @@ def parse_elapsed_us(line: str) -> int | None:
             except ValueError:
                 return None
     return None
+
+
+def parse_line_int_field(line: str, field: str) -> int | None:
+    match = re.search(rf"(?:^|\s){re.escape(field)}=(\d+)(?:\s|$)", line)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def camera_timing_payload(
+    request_received_epoch_us: int,
+    command_result: dict | None,
+    line: str | None,
+) -> dict:
+    response_epoch_us = (
+        command_result.get("response_epoch_us")
+        if command_result
+        else epoch_us()
+    )
+    payload = {
+        "last_request_received_epoch_us": request_received_epoch_us,
+        "last_command_write_epoch_us": (
+            command_result.get("command_write_epoch_us")
+            if command_result
+            else None
+        ),
+        "last_command_flush_epoch_us": (
+            command_result.get("command_flush_epoch_us")
+            if command_result
+            else None
+        ),
+        "last_response_epoch_us": response_epoch_us,
+        "last_http_elapsed_us": response_epoch_us - request_received_epoch_us,
+        "last_daemon_received_epoch_us": (
+            parse_line_int_field(line, "daemon_received_epoch_us")
+            if line
+            else None
+        ),
+        "last_daemon_completed_epoch_us": (
+            parse_line_int_field(line, "daemon_completed_epoch_us")
+            if line
+            else None
+        ),
+        "last_daemon_line": line,
+    }
+    return payload
+
+
+def update_camera_timing(payload: dict) -> None:
+    for key in (
+        "last_request_received_epoch_us",
+        "last_command_write_epoch_us",
+        "last_command_flush_epoch_us",
+        "last_response_epoch_us",
+        "last_http_elapsed_us",
+        "last_daemon_received_epoch_us",
+        "last_daemon_completed_epoch_us",
+        "last_daemon_line",
+    ):
+        camera_state[key] = payload.get(key)
 
 
 def use_mock_camera() -> bool:
@@ -317,13 +413,18 @@ async def start_record():
     if camera_state["is_recording"]:
         raise HTTPException(status_code=400, detail="Camera already recording")
     
+    request_received_epoch_us = epoch_us()
+    timing = camera_timing_payload(request_received_epoch_us, None, None)
     try:
         if CAMERA_CONTROL_BIN.exists():
             logger.info("Starting camera recording via EDSDK daemon...")
-            line = camera_daemon.command("start")
+            command_result = camera_daemon.command_with_timing("start")
+            line = command_result["line"]
             if not line.startswith("OK"):
                 raise RuntimeError(line)
 
+            timing = camera_timing_payload(request_received_epoch_us, command_result, line)
+            update_camera_timing(timing)
             camera_state["last_command_elapsed_us"] = parse_elapsed_us(line)
             camera_state["is_recording"] = True
             camera_state["is_available"] = True
@@ -344,6 +445,8 @@ async def start_record():
             camera_state["is_available"] = True
             camera_state["mock_mode"] = False
             camera_state["last_command_elapsed_us"] = None
+            timing = camera_timing_payload(request_received_epoch_us, None, "OK legacy_start")
+            update_camera_timing(timing)
             logger.info("Camera recording started")
         else:
             # Mock mode for development
@@ -351,6 +454,9 @@ async def start_record():
             camera_state["is_recording"] = True
             camera_state["is_available"] = True
             camera_state["mock_mode"] = True
+            camera_state["last_command_elapsed_us"] = None
+            timing = camera_timing_payload(request_received_epoch_us, None, "OK mock_start")
+            update_camera_timing(timing)
             logger.info("Camera recording started (MOCK)")
         
         return {
@@ -358,6 +464,7 @@ async def start_record():
             "message": "Recording started",
             "is_recording": camera_state["is_recording"],
             "elapsed_us": camera_state["last_command_elapsed_us"],
+            **timing,
         }
         
     except Exception as e:
@@ -376,13 +483,18 @@ async def stop_record():
     if not camera_state["is_recording"]:
         raise HTTPException(status_code=400, detail="Camera not recording")
     
+    request_received_epoch_us = epoch_us()
+    timing = camera_timing_payload(request_received_epoch_us, None, None)
     try:
         if CAMERA_CONTROL_BIN.exists():
             logger.info("Stopping camera recording via EDSDK daemon...")
-            line = camera_daemon.command("stop")
+            command_result = camera_daemon.command_with_timing("stop")
+            line = command_result["line"]
             if not line.startswith("OK"):
                 raise RuntimeError(line)
 
+            timing = camera_timing_payload(request_received_epoch_us, command_result, line)
+            update_camera_timing(timing)
             camera_state["last_command_elapsed_us"] = parse_elapsed_us(line)
             camera_state["is_recording"] = False
             camera_state["is_available"] = True
@@ -405,12 +517,17 @@ async def stop_record():
             camera_state["is_available"] = True
             camera_state["mock_mode"] = False
             camera_state["last_command_elapsed_us"] = None
+            timing = camera_timing_payload(request_received_epoch_us, None, "OK legacy_stop")
+            update_camera_timing(timing)
             logger.info("Camera recording stopped")
         else:
             # Mock mode for development
             logger.warning("CameraControl not found - running in MOCK mode")
             camera_state["is_recording"] = False
             camera_state["mock_mode"] = True
+            camera_state["last_command_elapsed_us"] = None
+            timing = camera_timing_payload(request_received_epoch_us, None, "OK mock_stop")
+            update_camera_timing(timing)
             logger.info("Camera recording stopped (MOCK)")
         
         return {
@@ -418,6 +535,7 @@ async def stop_record():
             "message": "Recording stopped",
             "is_recording": camera_state["is_recording"],
             "elapsed_us": camera_state["last_command_elapsed_us"],
+            **timing,
         }
         
     except subprocess.TimeoutExpired:

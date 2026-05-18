@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from measurement_controller import MeasurementController
 from api_models import (
     ControlSource,
+    MeasurementConfig,
     SaveExperimentConfigRequest,
     SaveExperimentConfigResponse,
     StartMeasurementRequest,
@@ -67,11 +68,16 @@ def _parse_camera_download_output(stdout: str) -> dict:
             parsed["session_dir"] = value
         elif key == "Camera file":
             parsed["camera_file"] = value
-        elif key == "Destination":
+        elif key in {"Destination", "MP4 destination", "Converted MP4"}:
             parsed["destination"] = value
-        elif key == "Downloaded":
-            parsed["destination"] = value
+        elif key == "Raw destination":
+            parsed["raw_destination"] = value
+        elif key in {"Downloaded", "Downloaded raw"}:
+            parsed["raw_destination"] = value
         elif key == "Metadata":
+            parsed["metadata_path"] = value
+        elif key == "Raw metadata":
+            parsed["raw_metadata_path"] = value
             parsed["metadata_path"] = value
         elif key == "Size":
             size_text = value.removesuffix(" bytes")
@@ -93,6 +99,22 @@ def _config_file_name(requested_name: str | None, test_name: str) -> str:
         safe_name = "experiment_config"
 
     return f"{safe_name}.json"
+
+
+def _experiment_config_path(file_name: str) -> Path:
+    """Resolve a saved experiment config filename without allowing traversal."""
+    safe_name = Path(file_name).name
+    if not safe_name.lower().endswith(".json"):
+        safe_name = f"{safe_name}.json"
+    if safe_name in {"", ".", ".."}:
+        raise ValueError("Experiment config filename is required")
+
+    config_path = EXPERIMENT_CONFIG_DIR / safe_name
+    resolved_root = EXPERIMENT_CONFIG_DIR.resolve()
+    resolved_path = config_path.resolve()
+    if resolved_root not in resolved_path.parents and resolved_path != resolved_root:
+        raise ValueError("Invalid experiment config filename")
+    return resolved_path
 
 
 async def _run_camera_download():
@@ -118,9 +140,9 @@ async def _run_camera_download():
         if returncode == 0:
             destination = parsed.get("destination")
             message = (
-                f"Downloaded {Path(destination).name}"
+                f"Downloaded raw video and converted {Path(destination).name}"
                 if destination
-                else "Camera recording downloaded"
+                else "Camera recording downloaded and converted"
             )
             _set_camera_download_status(
                 is_running=False,
@@ -279,6 +301,51 @@ async def save_experiment_config(request: SaveExperimentConfigRequest):
         }
     except Exception as e:
         logger.error(f"Error saving experiment config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/experiment_configs/start/{file_name}")
+async def start_experiment_config(
+    file_name: str,
+    control_source: ControlSource = Query(default="api"),
+):
+    """
+    Start a saved experiment configuration by filename.
+
+    This is the API equivalent of selecting a preset in the browser and clicking
+    Run: the saved JSON is loaded unchanged and submitted to the shared app
+    controller, so browser and agent clients observe the same live run.
+    """
+    try:
+        config_path = _experiment_config_path(file_name)
+        if not config_path.exists() or not config_path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Experiment config not found: {config_path.name}",
+            )
+
+        config = MeasurementConfig.model_validate_json(
+            config_path.read_text(encoding="utf-8")
+        )
+        session_id = await controller.start_measurement(
+            config,
+            control_source=control_source,
+        )
+        return {
+            "success": True,
+            "session_id": session_id,
+            "file_name": config_path.name,
+            "path": str(config_path),
+            "message": f"Measurement started from {config_path.name}",
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error starting experiment config {file_name}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -448,10 +515,12 @@ async def download_latest_camera_recording():
         started_at=_now_iso(),
         finished_at=None,
         success=None,
-        message="Downloading latest camera recording",
+        message="Downloading raw camera recording and converting to MP4",
         session_dir=None,
         camera_file=None,
+        raw_destination=None,
         destination=None,
+        raw_metadata_path=None,
         metadata_path=None,
         source_size_bytes=None,
         returncode=None,

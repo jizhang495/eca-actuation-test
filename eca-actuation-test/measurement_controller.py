@@ -221,6 +221,11 @@ class MeasurementController:
         elif self.oscilloscope.is_connected:
             await asyncio.to_thread(self.oscilloscope.start_acquisition)
             self._record_event("Oscilloscope acquisition started")
+            self._record_event(
+                "Oscilloscope CH1/CH2 full-record data will be exported to "
+                "oscilloscope_waveform.csv at stop; readings.csv is timing-only "
+                "in oscilloscope mode"
+            )
 
         if config.record_camera:
             camera_start_requested_at = time.perf_counter()
@@ -343,12 +348,43 @@ class MeasurementController:
             if camera_command_ms is not None
             else ""
         )
+        timing_detail = self._camera_timing_offsets_detail()
         self._record_event(
             "Camera start command requested "
             f"{camera_start_request_offset_ms:.3f} ms after measurement t0; "
             f"acknowledged {camera_start_ack_ms:.3f} ms after measurement t0"
-            f"{command_detail}"
+            f"{command_detail}{timing_detail}"
         )
+
+    def _camera_timing_offsets_detail(self) -> str:
+        """Format camera service/daemon timing fields relative to measurement t0."""
+        timing = self.camera.last_timing
+        if not timing or not self.start_time:
+            return ""
+
+        labels = (
+            ("service received", "last_request_received_epoch_us"),
+            ("daemon write", "last_command_write_epoch_us"),
+            ("daemon received", "last_daemon_received_epoch_us"),
+            ("EDSDK returned", "last_daemon_completed_epoch_us"),
+            ("service responded", "last_response_epoch_us"),
+        )
+        parts = []
+        for label, key in labels:
+            offset = self._epoch_us_offset_ms(timing.get(key))
+            if offset is not None:
+                parts.append(f"{label} {offset:.3f} ms")
+
+        http_elapsed = timing.get("last_http_elapsed_us")
+        if isinstance(http_elapsed, (int, float)):
+            parts.append(f"HTTP elapsed {http_elapsed / 1000:.3f} ms")
+
+        return f"; {'; '.join(parts)}" if parts else ""
+
+    def _epoch_us_offset_ms(self, epoch_us: object) -> Optional[float]:
+        if not isinstance(epoch_us, (int, float)) or not self.start_time:
+            return None
+        return (float(epoch_us) / 1_000_000.0 - self.start_time) * 1000
 
     async def stop_measurement(self, control_source: ControlSource = "api") -> dict:
         """
@@ -362,21 +398,107 @@ class MeasurementController:
 
         logger.info("Stopping measurement...")
         self._record_event(f"Stop requested by {control_source}", source=control_source)
+        stop_requested_perf = time.perf_counter()
         oscilloscope_stop_elapsed = None
+        oscilloscope_stop_task = None
+        camera_stop_task = None
+        camera_stop_request_elapsed = None
         if (
             self.current_config
             and self.current_config.measurement_source == "oscilloscope"
             and self.oscilloscope.is_connected
             and self._start_monotonic is not None
         ):
-            oscilloscope_stop_elapsed = max(0.0, time.perf_counter() - self._start_monotonic)
-            await asyncio.to_thread(self.oscilloscope.stop_acquisition)
-            self._record_event(
-                "Oscilloscope acquisition stopped",
-                elapsed_time=oscilloscope_stop_elapsed,
+            oscilloscope_stop_elapsed = max(0.0, stop_requested_perf - self._start_monotonic)
+            oscilloscope_stop_task = asyncio.create_task(
+                asyncio.to_thread(self.oscilloscope.stop_acquisition)
             )
 
+        if self._record_camera_for_session and self.camera.is_recording:
+            camera_stop_request_elapsed = (
+                max(0.0, time.perf_counter() - self._start_monotonic)
+                if self._start_monotonic is not None
+                else None
+            )
+            camera_stop_task = asyncio.create_task(self.camera.stop_recording())
+
         self.is_measuring = False
+        if self._voltage_stage_task:
+            self._voltage_stage_task.cancel()
+        for task in self._relay_stage_tasks:
+            task.cancel()
+
+        if oscilloscope_stop_task or camera_stop_task:
+            tasks = [
+                task
+                for task in (oscilloscope_stop_task, camera_stop_task)
+                if task is not None
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            result_by_task = dict(zip(tasks, results))
+
+            if oscilloscope_stop_task:
+                result = result_by_task.get(oscilloscope_stop_task)
+                if isinstance(result, Exception):
+                    self._record_event(
+                        f"Oscilloscope acquisition stop failed: {result}",
+                        kind="error",
+                        elapsed_time=oscilloscope_stop_elapsed,
+                    )
+                else:
+                    self._record_event(
+                        "Oscilloscope acquisition stopped",
+                        elapsed_time=oscilloscope_stop_elapsed,
+                    )
+
+            if camera_stop_task:
+                result = result_by_task.get(camera_stop_task)
+                camera_stop_ack_elapsed = (
+                    max(0.0, time.perf_counter() - self._start_monotonic)
+                    if self._start_monotonic is not None
+                    else None
+                )
+                request_offset_ms = (
+                    camera_stop_request_elapsed * 1000
+                    if camera_stop_request_elapsed is not None
+                    else None
+                )
+                ack_offset_ms = (
+                    camera_stop_ack_elapsed * 1000
+                    if camera_stop_ack_elapsed is not None
+                    else None
+                )
+                if isinstance(result, Exception) or result is False:
+                    detail = result if isinstance(result, Exception) else "command returned false"
+                    self._record_event(
+                        f"Camera recording stop failed: {detail}",
+                        kind="error",
+                        elapsed_time=camera_stop_ack_elapsed,
+                    )
+                else:
+                    request_text = (
+                        f"{request_offset_ms:.3f} ms after measurement t0"
+                        if request_offset_ms is not None
+                        else "unknown offset"
+                    )
+                    ack_text = (
+                        f"{ack_offset_ms:.3f} ms after measurement t0"
+                        if ack_offset_ms is not None
+                        else "unknown offset"
+                    )
+                    self._record_event(
+                        "Camera recording stopped; stop command requested "
+                        f"{request_text}; acknowledged {ack_text}"
+                        f"{self._camera_timing_offsets_detail()}",
+                        elapsed_time=camera_stop_ack_elapsed,
+                    )
+
+        elif self._record_camera_for_session:
+            self._record_event(
+                "Camera was requested but was not recording at stop",
+                kind="warning",
+            )
+
         current_task = asyncio.current_task()
 
         # Let the acquisition loop finish any in-flight instrument read before
@@ -430,11 +552,15 @@ class MeasurementController:
                 pass
         self._relay_stage_tasks.clear()
 
-        # Stop camera
-        if self._record_camera_for_session and self.camera.is_recording:
+        # Fallback if no synchronized camera stop request was issued above.
+        if (
+            self._record_camera_for_session
+            and camera_stop_task is None
+            and self.camera.is_recording
+        ):
             await self.camera.stop_recording()
             self._record_event("Camera recording stopped")
-        elif self._record_camera_for_session:
+        elif self._record_camera_for_session and camera_stop_task is None:
             self._record_event("Camera was requested but was not recording at stop", kind="warning")
 
         # Stop data logging
@@ -482,7 +608,7 @@ class MeasurementController:
                 self.oscilloscope.capture_waveforms,
                 stop_elapsed_seconds,
             )
-            if not waveform or not waveform.get("rows"):
+            if not waveform or not self._has_oscilloscope_waveform_data(waveform):
                 self._record_event("Oscilloscope waveform export produced no data", kind="warning")
                 return
 
@@ -493,9 +619,69 @@ class MeasurementController:
             )
             if csv_path:
                 self._record_event(f"Oscilloscope waveform saved to {csv_path.name}")
+                self._record_oscilloscope_waveform_coverage(waveform)
         except Exception as e:
             logger.error("Failed to save oscilloscope waveform: %s", e)
             self._record_event(f"Oscilloscope waveform export failed: {e}", kind="error")
+
+    @staticmethod
+    def _has_oscilloscope_waveform_data(waveform: dict) -> bool:
+        rows = waveform.get("rows")
+        if rows:
+            return True
+
+        channels = waveform.get("channels", {})
+        for channel in channels.values():
+            if channel and channel.get("raw_values"):
+                return True
+        return False
+
+    def _record_oscilloscope_waveform_coverage(self, waveform: dict) -> None:
+        """Log whether the exported scope memory covers the full elapsed run."""
+        rows = waveform.get("rows") or []
+        metadata = waveform.get("metadata") or {}
+        stop_elapsed_seconds = metadata.get("stop_elapsed_seconds")
+        start_time = metadata.get("first_aligned_time")
+        end_time = metadata.get("last_aligned_time")
+        coverage_seconds = metadata.get("waveform_coverage_seconds")
+
+        if (
+            isinstance(start_time, (int, float))
+            and isinstance(end_time, (int, float))
+            and isinstance(coverage_seconds, (int, float))
+        ):
+            self._record_event(
+                f"Oscilloscope waveform export covers {coverage_seconds:.6g} s "
+                f"from t={start_time:.6g} s to t={end_time:.6g} s"
+            )
+        else:
+            times = [
+                row.get("time")
+                for row in rows
+                if isinstance(row.get("time"), (int, float))
+            ]
+
+            if not times:
+                return
+
+            start_time = min(times)
+            end_time = max(times)
+            coverage_seconds = max(0.0, end_time - start_time)
+            self._record_event(
+                f"Oscilloscope waveform export covers {coverage_seconds:.6g} s "
+                f"from t={start_time:.6g} s to t={end_time:.6g} s"
+            )
+        if (
+            isinstance(stop_elapsed_seconds, (int, float))
+            and stop_elapsed_seconds > 0
+            and start_time > 1.0
+        ):
+            self._record_event(
+                "Oscilloscope waveform export is only the final scope memory window, "
+                "not the full elapsed run; increase scope record span or use a "
+                "separate lower-rate continuous logger for full-run CH1/CH2 voltage",
+                kind="warning",
+            )
 
     async def _auto_stop_at_elapsed_time(self, stop_after_seconds: float):
         """Stop the run when the configured elapsed time is reached."""
@@ -598,8 +784,21 @@ class MeasurementController:
                     raise RuntimeError(
                         f"Failed to connect oscilloscope: {config.oscilloscope_visa_id}"
                         f"{error_detail}"
-                    )
+                )
                 logger.info(f"Oscilloscope connected: {config.oscilloscope_visa_id}")
+                full_record_duration = self._planned_oscilloscope_record_duration(config)
+                if full_record_duration:
+                    settings = await asyncio.to_thread(
+                        self.oscilloscope.configure_full_record,
+                        full_record_duration,
+                    )
+                    self._record_event(
+                        "Oscilloscope full-record capture configured: "
+                        f"target {full_record_duration:g} s, "
+                        f"scale {settings.get('actual_scale_seconds_per_div')} s/div, "
+                        f"record length {settings.get('actual_record_length')}, "
+                        f"sample rate {settings.get('actual_sample_rate_hz')} Sa/s"
+                    )
             else:
                 # Connect real DMMs only if VISA ID provided
                 if config.dmm1_visa_id:
@@ -629,6 +828,20 @@ class MeasurementController:
                 logger.info(f"Relay board connected: {config.relay_port}")
 
             await self._prime_voltage_reads(config.measurement_source)
+
+    @staticmethod
+    def _planned_oscilloscope_record_duration(config: MeasurementConfig) -> Optional[float]:
+        """Return the elapsed time the scope should retain in memory."""
+        candidates = []
+        if config.stop_after_seconds is not None:
+            candidates.append(config.stop_after_seconds)
+
+        candidates.extend(stage.end_time for stage in config.voltage_stages)
+        candidates.extend(stage.end_time for stage in config.relay_ch1_stages)
+        candidates.extend(stage.end_time for stage in config.relay_ch2_stages)
+
+        duration = max(candidates, default=0.0)
+        return duration if duration > 0 else None
 
     async def _prime_voltage_reads(self, measurement_source: str):
         """Perform one unlogged read so setup latency does not hit sample 0."""
@@ -688,6 +901,9 @@ class MeasurementController:
 
                 read_start = time.perf_counter()
                 if config.measurement_source == "oscilloscope":
+                    # The high-resolution oscilloscope record is exported at
+                    # stop. Polling waveform data during acquisition can disturb
+                    # the TBS display/record and is too slow for this loop.
                     dmm1_voltage, dmm2_voltage = None, None
                 else:
                     read_tasks = []
@@ -890,6 +1106,7 @@ class MeasurementController:
             "is_measuring": self.is_measuring,
             "camera_recording": self.camera.is_recording,
             "camera_available": self.camera.is_available,
+            "camera_timing": self.camera.last_timing,
             "session_id": self.current_session_id,
             "elapsed_time": elapsed,
             "mock_mode": self.use_mock,

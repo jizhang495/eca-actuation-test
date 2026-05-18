@@ -27,6 +27,11 @@ class Oscilloscope:
     _USBTMC_QUERY_TIMEOUT_SECONDS = 1.0
     _TEKTRONIX_INVALID_THRESHOLD = 1e30
     _WAVEFORM_SAMPLE_POINTS = 20
+    _FULL_RECORD_LENGTH = 5_000_000
+    _FULL_RECORD_CH1_PROBE_GAIN = 0.1
+    _FULL_RECORD_CH2_PROBE_GAIN = 1.0
+    _FULL_RECORD_CH1_SCALE_VOLTS_PER_DIV = 0.2
+    _FULL_RECORD_CH2_SCALE_VOLTS_PER_DIV = 0.002
 
     def __init__(self, visa_address: Optional[str] = None):
         self.visa_address = visa_address
@@ -156,16 +161,127 @@ class Oscilloscope:
             return
 
         for channel in (1, 2):
+            probe_gain = self._full_record_probe_gain(channel)
             for command in (
+                f"SELect:CH{channel} ON",
                 f":CHAN{channel}:DISP ON",
                 f":CHAN{channel}:COUP DC",
                 f":CHANnel{channel}:DISPlay ON",
                 f":CHANnel{channel}:COUPling DC",
+                f"CH{channel}:PROBe:GAIN {probe_gain}",
             ):
                 try:
                     self._write(command)
                 except Exception:
                     logger.debug("Oscilloscope config command not accepted: %s", command)
+
+    @classmethod
+    def _full_record_probe_gain(cls, channel: int) -> float:
+        if channel == 1:
+            return cls._FULL_RECORD_CH1_PROBE_GAIN
+        if channel == 2:
+            return cls._FULL_RECORD_CH2_PROBE_GAIN
+        raise ValueError(f"Unsupported oscilloscope channel: {channel}")
+
+    def configure_full_record(
+        self,
+        duration_seconds: float,
+        record_length: int = _FULL_RECORD_LENGTH,
+    ) -> dict:
+        """Configure a Tektronix-style long waveform record for a full run."""
+        if not self._is_connected or (not self.instrument and self._usbtmc_fd is None):
+            raise RuntimeError("Oscilloscope not connected")
+        if duration_seconds <= 0:
+            raise ValueError("duration_seconds must be greater than 0")
+
+        try:
+            divisions = self._query_float("HORizontal:DIVisions?") or 15.0
+            for command in (
+                "ACQuire:STATE OFF",
+                "TRIGger:A:MODe AUTO",
+                "TRIGger:A:TYPe EDGE",
+                "TRIGger:A:EDGE:SOUrce CH1",
+                "TRIGger:A:LEVel 0.1",
+                "ACQuire:MODe SAMPLE",
+                f"CH1:PROBe:GAIN {self._FULL_RECORD_CH1_PROBE_GAIN}",
+                f"CH1:SCAle {self._FULL_RECORD_CH1_SCALE_VOLTS_PER_DIV}",
+                "CH1:POSition 0",
+                f"CH2:PROBe:GAIN {self._FULL_RECORD_CH2_PROBE_GAIN}",
+                f"CH2:SCAle {self._FULL_RECORD_CH2_SCALE_VOLTS_PER_DIV}",
+                "CH2:POSition 0",
+                "HORizontal:RECOrdlength:Auto 0",
+                f"HORizontal:RECOrdlength {record_length}",
+                "HORizontal:DELay:MODe OFF",
+                "HORizontal:POSition 0",
+            ):
+                self._write(command)
+
+            settings = {}
+            for scale_seconds in self._horizontal_scale_candidates(duration_seconds, divisions):
+                self._write(f"HORizontal:SCAle {scale_seconds}")
+                settings = self._read_full_record_settings(
+                    duration_seconds,
+                    record_length,
+                    scale_seconds,
+                    divisions,
+                )
+                actual_span = settings.get("actual_record_span_seconds")
+                if actual_span is not None and actual_span >= duration_seconds:
+                    break
+
+            logger.info("Oscilloscope full-record settings: %s", settings)
+            return settings
+        except Exception as exc:
+            self.last_error = str(exc)
+            raise RuntimeError(f"Failed to configure oscilloscope full-record mode: {exc}") from exc
+
+    def _read_full_record_settings(
+        self,
+        duration_seconds: float,
+        record_length: int,
+        requested_scale_seconds: float,
+        divisions: float,
+    ) -> dict:
+        settings = {
+            "target_duration_seconds": duration_seconds,
+            "target_record_length": record_length,
+            "target_scale_seconds_per_div": requested_scale_seconds,
+            "horizontal_divisions": divisions,
+            "actual_scale_seconds_per_div": self._query_float("HORizontal:SCAle?"),
+            "actual_record_length": self._query_int("HORizontal:RECOrdlength?"),
+            "actual_acq_length": self._query_int("HORizontal:ACQLENGTH?"),
+            "actual_sample_rate_hz": self._query_float("HORizontal:SAMPLERate?"),
+            "actual_horizontal_position": self._query_float("HORizontal:POSition?"),
+            "actual_ch1_probe_gain": self._query_float("CH1:PROBe:GAIN?"),
+            "actual_ch2_probe_gain": self._query_float("CH2:PROBe:GAIN?"),
+            "actual_ch1_scale_volts_per_div": self._query_float("CH1:SCAle?"),
+            "actual_ch2_scale_volts_per_div": self._query_float("CH2:SCAle?"),
+        }
+        actual_scale = settings.get("actual_scale_seconds_per_div")
+        actual_record_length = settings.get("actual_record_length")
+        actual_sample_rate = settings.get("actual_sample_rate_hz")
+        if actual_record_length and actual_sample_rate:
+            settings["actual_record_interval_seconds"] = 1.0 / actual_sample_rate
+            settings["actual_record_span_seconds"] = actual_record_length / actual_sample_rate
+        elif actual_scale and actual_record_length:
+            settings["actual_record_span_seconds"] = actual_scale * divisions
+            settings["actual_record_interval_seconds"] = (
+                settings["actual_record_span_seconds"] / actual_record_length
+            )
+        return settings
+
+    @staticmethod
+    def _horizontal_scale_candidates(duration_seconds: float, divisions: float) -> list[float]:
+        """Return 1-2-5 sequence scales at and above the target duration."""
+        target = duration_seconds / max(divisions, 1.0)
+        candidates: list[float] = []
+        for exponent in range(-9, 3):
+            factor = 10.0 ** exponent
+            candidates.extend((1.0 * factor, 2.0 * factor, 5.0 * factor))
+        candidates.append(100.0)
+
+        sorted_candidates = sorted(set(candidates))
+        return [candidate for candidate in sorted_candidates if candidate >= target] or [target]
 
     def start_acquisition(self):
         """Put the oscilloscope into continuous acquisition/run mode."""
@@ -310,7 +426,7 @@ class Oscilloscope:
         if channels[1] is None and channels[2] is None:
             return None
 
-        rows, alignment = self._combine_waveform_rows(channels, stop_elapsed_seconds)
+        alignment = self._waveform_alignment_metadata(channels, stop_elapsed_seconds)
         return {
             "metadata": {
                 "idn": self._idn,
@@ -327,7 +443,7 @@ class Oscilloscope:
                 },
                 **alignment,
             },
-            "rows": rows,
+            "channels": channels,
         }
 
     def _read_tektronix_waveform_voltage(
@@ -422,25 +538,15 @@ class Oscilloscope:
             logger.error("Failed to export oscilloscope CH%s waveform: %s", channel, e)
             return None
 
-        voltages = [
-            (value - y_offset) * y_multiplier + y_zero
-            for value in raw_values
-        ]
-        scope_times = [
-            x_zero + ((start - 1 + index) - point_offset) * x_increment
-            for index in range(len(voltages))
-        ]
-
         return {
-            "voltages": voltages,
-            "scope_times": scope_times,
+            "raw_values": raw_values,
             "x_increment": x_increment,
             "metadata": {
                 "channel": channel,
                 "data_start": start,
                 "data_stop": stop,
                 "preamble_point_count": point_count,
-                "exported_point_count": len(voltages),
+                "exported_point_count": len(raw_values),
                 "x_unit": x_unit,
                 "x_increment": x_increment,
                 "x_zero": x_zero,
@@ -453,18 +559,17 @@ class Oscilloscope:
             },
         }
 
-    def _combine_waveform_rows(
+    def _waveform_alignment_metadata(
         self,
         channels: dict[int, Optional[dict]],
         stop_elapsed_seconds: Optional[float],
-    ) -> tuple[list[dict], dict]:
+    ) -> dict:
         ch1 = channels.get(1)
         ch2 = channels.get(2)
-        ch1_values = ch1["voltages"] if ch1 else []
-        ch2_values = ch2["voltages"] if ch2 else []
-        ch1_times = ch1["scope_times"] if ch1 else []
-        ch2_times = ch2["scope_times"] if ch2 else []
-        sample_count = max(len(ch1_values), len(ch2_values))
+        sample_count = max(
+            len(ch1.get("raw_values", [])) if ch1 else 0,
+            len(ch2.get("raw_values", [])) if ch2 else 0,
+        )
 
         x_increment = None
         if ch1:
@@ -472,43 +577,30 @@ class Oscilloscope:
         elif ch2:
             x_increment = ch2["x_increment"]
 
-        rows: list[dict] = []
         cropped_before_t0 = 0
-        for sample_index in range(sample_count):
-            samples_from_end = sample_count - 1 - sample_index
-            aligned_time = None
-            if stop_elapsed_seconds is not None and x_increment is not None:
-                aligned_time = stop_elapsed_seconds - samples_from_end * x_increment
-                if aligned_time < 0:
-                    cropped_before_t0 += 1
-                    continue
+        exported_rows = sample_count
+        first_time = None
+        last_time = None
+        coverage_seconds = None
+        if stop_elapsed_seconds is not None and x_increment is not None and sample_count:
+            first_time = stop_elapsed_seconds - (sample_count - 1) * x_increment
+            last_time = stop_elapsed_seconds
+            if first_time < 0:
+                cropped_before_t0 = min(sample_count, math.ceil(abs(first_time) / x_increment))
+                exported_rows = max(0, sample_count - cropped_before_t0)
+                first_time = 0.0 if exported_rows else None
+            if exported_rows > 1:
+                coverage_seconds = (exported_rows - 1) * x_increment
+            elif exported_rows == 1:
+                coverage_seconds = 0.0
 
-            ch1_index = sample_index - (sample_count - len(ch1_values))
-            ch2_index = sample_index - (sample_count - len(ch2_values))
-            ch1_voltage = ch1_values[ch1_index] if 0 <= ch1_index < len(ch1_values) else None
-            ch2_voltage = ch2_values[ch2_index] if 0 <= ch2_index < len(ch2_values) else None
-            scope_time = None
-            if 0 <= ch1_index < len(ch1_times):
-                scope_time = ch1_times[ch1_index]
-            elif 0 <= ch2_index < len(ch2_times):
-                scope_time = ch2_times[ch2_index]
-
-            rows.append(
-                {
-                    "time": aligned_time,
-                    "scope_time": scope_time,
-                    "ch1_voltage": ch1_voltage,
-                    "ch2_voltage": ch2_voltage,
-                    "sample_index": len(rows),
-                    "ch1_sample_index": ch1_index if 0 <= ch1_index < len(ch1_values) else None,
-                    "ch2_sample_index": ch2_index if 0 <= ch2_index < len(ch2_values) else None,
-                }
-            )
-
-        return rows, {
-            "exported_rows": len(rows),
+        return {
+            "exported_rows": exported_rows,
             "cropped_rows_before_t0": cropped_before_t0,
             "raw_combined_rows": sample_count,
+            "first_aligned_time": first_time,
+            "last_aligned_time": last_time,
+            "waveform_coverage_seconds": coverage_seconds,
         }
 
     def _query_float(self, query: str) -> Optional[float]:
@@ -534,6 +626,10 @@ class Oscilloscope:
             return None
 
         return value
+
+    def _query_int(self, query: str) -> Optional[int]:
+        value = self._query_float(query)
+        return int(value) if value is not None else None
 
     def _query_binary_values(self, query: str) -> list[int]:
         if self.instrument:

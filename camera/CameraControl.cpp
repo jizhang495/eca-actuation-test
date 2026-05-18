@@ -18,6 +18,12 @@ std::string errorToHex(EdsError err) {
     return stream.str();
 }
 
+long long epochMicroseconds() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+}
+
 void printError(const std::string& action, EdsError err) {
     std::cerr << "ERR " << action << " failed: " << errorToHex(err) << std::endl;
 }
@@ -213,6 +219,7 @@ int runDaemon() {
 
     std::string command;
     while (std::getline(std::cin, command)) {
+        auto commandReceivedEpochUs = epochMicroseconds();
         auto commandStarted = std::chrono::steady_clock::now();
 
         if (command == "start") {
@@ -236,12 +243,20 @@ int runDaemon() {
         auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - commandStarted
         );
+        auto commandCompletedEpochUs = epochMicroseconds();
 
         if (err == EDS_ERR_OK) {
-            std::cout << "OK " << command << " elapsed_us=" << elapsed.count() << std::endl;
+            std::cout << "OK " << command
+                      << " elapsed_us=" << elapsed.count()
+                      << " daemon_received_epoch_us=" << commandReceivedEpochUs
+                      << " daemon_completed_epoch_us=" << commandCompletedEpochUs
+                      << std::endl;
         } else {
             std::cout << "ERR " << command << " " << errorToHex(err)
-                      << " elapsed_us=" << elapsed.count() << std::endl;
+                      << " elapsed_us=" << elapsed.count()
+                      << " daemon_received_epoch_us=" << commandReceivedEpochUs
+                      << " daemon_completed_epoch_us=" << commandCompletedEpochUs
+                      << std::endl;
         }
         std::cout.flush();
     }
