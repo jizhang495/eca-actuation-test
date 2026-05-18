@@ -4,7 +4,7 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
 DMMAcquisitionMode = Literal["fast", "low_noise"]
-MeasurementSource = Literal["dmm", "oscilloscope"]
+MeasurementSource = Literal["dmm", "oscilloscope", "moku"]
 ControlSource = Literal["ui", "api", "agent", "script"]
 
 
@@ -32,12 +32,19 @@ class MeasurementConfig(BaseModel):
     dmm1_visa_id: Optional[str] = Field(None, description="VISA ID for DMM1")
     dmm2_visa_id: Optional[str] = Field(None, description="VISA ID for DMM2")
     oscilloscope_visa_id: Optional[str] = Field(None, description="VISA ID for oscilloscope")
+    moku_address: Optional[str] = Field(None, description="Moku:Pro address or discovered resource")
     power_supply_visa_id: Optional[str] = Field(None, description="VISA ID for power supply")
     relay_port: Optional[str] = Field(None, description="Serial port for relay board")
     voltage_stages: list[VoltageStage] = Field(default_factory=list, max_length=10)
     relay_ch1_stages: list[RelayStage] = Field(default_factory=list, max_length=10)
     relay_ch2_stages: list[RelayStage] = Field(default_factory=list, max_length=10)
     sampling_rate_hz: float = Field(default=10.0, description="DMM sampling rate in Hz", gt=0)
+    moku_sample_rate_hz: float = Field(
+        default=10000.0,
+        description="Moku:Pro Data Logger sample rate in Hz",
+        ge=10,
+        le=1_000_000,
+    )
     dmm_acquisition_mode: DMMAcquisitionMode = Field(
         default="fast",
         description="DMM integration/noise-rejection mode",
@@ -94,6 +101,8 @@ class StopMeasurementResponse(BaseModel):
     log_path: str
     oscilloscope_csv_path: Optional[str] = None
     oscilloscope_metadata_path: Optional[str] = None
+    moku_csv_path: Optional[str] = None
+    moku_metadata_path: Optional[str] = None
 
 
 class InstrumentStatus(BaseModel):
@@ -154,6 +163,7 @@ class InstrumentListResponse(BaseModel):
     visa_resources: list[str]
     dmm_resources: list[str] = Field(default_factory=list)
     oscilloscope_resources: list[str] = Field(default_factory=list)
+    moku_resources: list[str] = Field(default_factory=list)
     power_supply_resources: list[str] = Field(default_factory=list)
     visa_details: list[VisaResourceInfo] = Field(default_factory=list)
     serial_ports: list[str]

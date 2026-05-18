@@ -68,6 +68,8 @@ class DataLogger:
         self.csv_file: Optional[Path] = None
         self.oscilloscope_waveform_file: Optional[Path] = None
         self.oscilloscope_waveform_metadata_file: Optional[Path] = None
+        self.moku_waveform_file: Optional[Path] = None
+        self.moku_waveform_metadata_file: Optional[Path] = None
         self.log_file: Optional[Path] = None
         self.config_file: Optional[Path] = None
         
@@ -98,6 +100,8 @@ class DataLogger:
         self.oscilloscope_waveform_metadata_file = (
             self.current_session_dir / "oscilloscope_waveform_metadata.json"
         )
+        self.moku_waveform_file = self.current_session_dir / "moku_waveform.csv"
+        self.moku_waveform_metadata_file = self.current_session_dir / "moku_waveform_metadata.json"
         self.log_file = self.current_session_dir / "log.txt"
         self.config_file = self.current_session_dir / "config.json"
         
@@ -278,6 +282,26 @@ class DataLogger:
 
         logger.info("Oscilloscope waveform saved: %s", csv_path)
         return csv_path, metadata_path
+
+    def save_moku_waveform(self, waveform: dict) -> tuple[Optional[Path], Optional[Path]]:
+        """Save an exported Moku waveform to the active session."""
+        if not self.current_session_dir:
+            logger.warning("No active session to save Moku waveform")
+            return None, None
+
+        original_csv_path = self.oscilloscope_waveform_file
+        original_metadata_path = self.oscilloscope_waveform_metadata_file
+        try:
+            self.oscilloscope_waveform_file = self.moku_waveform_file or (
+                self.current_session_dir / "moku_waveform.csv"
+            )
+            self.oscilloscope_waveform_metadata_file = self.moku_waveform_metadata_file or (
+                self.current_session_dir / "moku_waveform_metadata.json"
+            )
+            return self.save_oscilloscope_waveform(waveform)
+        finally:
+            self.oscilloscope_waveform_file = original_csv_path
+            self.oscilloscope_waveform_metadata_file = original_metadata_path
 
     def _write_streamed_oscilloscope_rows(
         self,

@@ -265,6 +265,104 @@ class MockOscilloscope:
         self.disconnect()
 
 
+class MockMokuProDatalogger:
+    """Mock Moku:Pro Data Logger."""
+
+    def __init__(self, moku_address: Optional[str] = None):
+        self.moku_address = moku_address or "MOKU::MOCK::PRO"
+        self._is_connected = False
+        self._logging_started_at: Optional[float] = None
+        self._sample_rate_hz = 1000.0
+        self._duration_seconds = 0.0
+
+    @staticmethod
+    def list_available_devices() -> list[str]:
+        return ["MOKU::MOCK::PRO"]
+
+    @staticmethod
+    def discover_devices() -> list[dict]:
+        return [
+            {
+                "resource": "MOKU::MOCK::PRO",
+                "idn": "MokuPro-MOCK, serial MOCK, Moku:Pro",
+                "kind": "moku",
+                "label": "Moku:Pro MOCK",
+            }
+        ]
+
+    def connect(self, moku_address: Optional[str] = None) -> bool:
+        if moku_address:
+            self.moku_address = moku_address
+        logger.info("Mock Moku:Pro connected: %s", self.moku_address)
+        self._is_connected = True
+        return True
+
+    def configure_voltage_channels(self, sample_rate_hz: float):
+        self._sample_rate_hz = sample_rate_hz
+
+    def start_logging(
+        self,
+        duration_seconds: float,
+        sample_rate_hz: float,
+        file_name_prefix: str,
+        comments: str = "",
+    ) -> dict:
+        self._logging_started_at = time.monotonic()
+        self._sample_rate_hz = sample_rate_hz
+        self._duration_seconds = duration_seconds
+        return {
+            "file_name": f"{file_name_prefix}_mock.li",
+            "duration": duration_seconds,
+            "rate": sample_rate_hz,
+            "comments": comments,
+        }
+
+    def stop_logging(self) -> dict:
+        return {"stopped": True}
+
+    def capture_waveforms(
+        self,
+        session_dir,
+        stop_elapsed_seconds: Optional[float],
+        t0_offset_seconds: Optional[float],
+    ) -> dict:
+        duration = stop_elapsed_seconds or min(self._duration_seconds, 10.0)
+        sample_count = max(2, min(int(duration * self._sample_rate_hz), 10000))
+        dt = duration / (sample_count - 1) if sample_count > 1 else 0.0
+        rows = []
+        for index in range(sample_count):
+            t = index * dt
+            rows.append(
+                {
+                    "time": t,
+                    "scope_time": t + (t0_offset_seconds or 0.0),
+                    "ch1_voltage": 0.2 + random.gauss(0, 0.002),
+                    "ch2_voltage": 0.01 * random.gauss(0, 1.0),
+                    "sample_index": index,
+                    "ch1_sample_index": index,
+                    "ch2_sample_index": index,
+                }
+            )
+        return {
+            "metadata": {
+                "source": "moku",
+                "instrument": "Mock Moku:Pro Data Logger",
+                "requested_sample_rate_hz": self._sample_rate_hz,
+                "stop_elapsed_seconds": stop_elapsed_seconds,
+                "t0_offset_seconds": t0_offset_seconds,
+            },
+            "rows": rows,
+        }
+
+    def disconnect(self):
+        logger.info("Mock Moku:Pro disconnected")
+        self._is_connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        return self._is_connected
+
+
 class MockUSB_RLY08C:
     """Mock Devantech USB-RLY08C 8-channel relay board."""
 

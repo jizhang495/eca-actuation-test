@@ -1,4 +1,4 @@
-# Electrochemical Actuator Testing Webapp PRD
+# Electrochemical Actuator Testing Webapp Requirements
 
 This document describes the current product requirements and implementation target for the ECA testing app. See [OPERATION.md](OPERATION.md) for the runtime contract used during actual experiments.
 
@@ -17,6 +17,7 @@ The browser is a monitor and operator console. It must not be the only way to ru
 | --- | --- | --- | --- |
 | DMM | Keithley 2110 x2 | VISA / USB | Slow voltage checks and DMM-mode logging |
 | Oscilloscope | Tektronix | VISA / USB | Full-record voltage/current capture for relay-edge transients |
+| Moku:Pro | Liquid Instruments Moku:Pro | MokuCLI / network or USB | Full-run CH1/CH2 high-rate voltage logging |
 | Power supply | IT6412 | VISA / USB | Programmed voltage stages |
 | Relay board | Devantech USB-RLY08C | USB serial | Programmed relay stages |
 | Camera | Canon 2000D DSLR | Canon EDSDK bridge + HTTP service | Synchronized video recording |
@@ -36,7 +37,7 @@ The browser is a monitor and operator console. It must not be the only way to ru
 ### 3.2 Timing and Sync
 
 - The measurement clock `t0` is defined by the backend, not the frontend.
-- Instrument connection, camera preparation, oscilloscope setup, and the configured ready delay occur before `t0`.
+- Instrument connection, camera preparation, high-rate measurement setup, and the configured ready delay occur before `t0`.
 - At `t0`, camera recording, voltage-stage scheduling, relay-stage scheduling, and live data logging start from the same backend clock.
 - For 50 fps camera video, sync is acceptable when the measured camera/electrical start offset is less than one frame: `0.02 s`.
 - Stop commands should stop electrical measurement and camera recording together. Any camera video transfer/compression happens only after measurement stop.
@@ -45,8 +46,9 @@ The browser is a monitor and operator console. It must not be the only way to ru
 ### 3.3 Electrical Measurement
 
 - DMM mode writes slow continuous readings to `readings.csv`.
-- Oscilloscope mode is the preferred mode for sharp current peaks at relay edges.
+- Oscilloscope or Moku:Pro mode is the preferred mode for sharp current peaks at relay edges.
 - Full-record Tektronix capture should start before `t0`, include the ready delay and planned run duration, stop with the measurement, and export the whole waveform to the session folder.
+- Moku:Pro Data Logger capture should start before `t0`, crop pre-`t0` samples from the app CSV, stop with the measurement, and export full-run CH1/CH2 data to the session folder. `moku_sample_rate_hz` controls the Moku file rate separately from the app timing loop.
 - The current analysis convention is `current_mA = ch2_voltage / 330 * 1000`.
 
 ### 3.4 Camera and Video
@@ -70,12 +72,14 @@ user-data/sessions/<timestamp>_<test_name>/
   readings.csv
   oscilloscope_waveform.csv
   oscilloscope_waveform_metadata.json
+  moku_waveform.csv
+  moku_waveform_metadata.json
   oscilloscope_waveform.svg
   oscilloscope_waveform_analysis.svg
   <camera-recording>.mp4
 ```
 
-Not every artifact exists for every run. DMM-only runs do not create oscilloscope waveform files. Runs without camera recording do not create video files.
+Not every artifact exists for every run. DMM-only runs do not create high-rate waveform files. Runs without camera recording do not create video files.
 
 ## 4. UI Requirements
 
@@ -98,7 +102,7 @@ The UI should show:
 
 - Camera service and recording status
 - Active session id and elapsed time
-- Measurement source selection: DMM or oscilloscope
+- Measurement source selection: DMM, oscilloscope, or Moku:Pro
 - Live plots for the two electrical channels
 - Voltage and relay stage editors
 - Current errors and recent log messages
@@ -134,6 +138,7 @@ The UI should show:
 - Camera sync is logged but not yet automatically rejected when it exceeds the 20 ms target.
 - Manual camera download currently selects the newest camera movie; exact session correlation should be made stricter.
 - DMM current acquisition is not adequate for fast relay-edge charge integration.
+- Moku:Pro API control requires a working `mokucli` install and current MokuOS.
 - There is no automated hardware-in-loop sync regression test.
 
 The active issue list is maintained in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
@@ -142,6 +147,6 @@ The active issue list is maintained in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 1. Add explicit runtime warnings when measured camera/electrical sync exceeds 20 ms.
 2. Add a hardware sync test using an LED or electrical trigger visible to both camera and scope.
-3. Add additional high-rate acquisition backends such as Moku, DAQ, SMU, or potentiostat.
+3. Add additional high-rate acquisition backends such as DAQ, SMU, or potentiostat.
 4. Add cross-session analysis for charge, strain, hysteresis, and repeatability.
 5. Add stricter metadata linking between camera file, session id, and run timestamps.

@@ -41,7 +41,7 @@ interface DMMReading {
 
 type ControlSource = "ui" | "api" | "agent" | "script";
 type DmmAcquisitionMode = "fast" | "low_noise";
-type MeasurementSource = "dmm" | "oscilloscope";
+type MeasurementSource = "dmm" | "oscilloscope" | "moku";
 
 interface MeasurementConfig {
   test_name: string;
@@ -49,12 +49,14 @@ interface MeasurementConfig {
   dmm1_visa_id: string | null;
   dmm2_visa_id: string | null;
   oscilloscope_visa_id?: string | null;
+  moku_address?: string | null;
   power_supply_visa_id: string | null;
   relay_port: string | null;
   voltage_stages: Array<{ start_time: number; end_time: number; voltage: number }>;
   relay_ch1_stages: RelayStage[];
   relay_ch2_stages: RelayStage[];
   sampling_rate_hz: number;
+  moku_sample_rate_hz?: number;
   dmm_acquisition_mode?: DmmAcquisitionMode;
   stop_after_seconds?: number | null;
   record_camera: boolean;
@@ -202,7 +204,11 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
   const dmmAcquisitionMode =
     configValue.dmm_acquisition_mode === "low_noise" ? "low_noise" : "fast";
   const measurementSource =
-    configValue.measurement_source === "dmm" ? "dmm" : "oscilloscope";
+    configValue.measurement_source === "dmm"
+      ? "dmm"
+      : configValue.measurement_source === "moku"
+        ? "moku"
+        : "oscilloscope";
   const stopAfterSeconds =
     configValue.stop_after_seconds === undefined || configValue.stop_after_seconds === null
       ? null
@@ -217,12 +223,18 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
     dmm1_visa_id: readOptionalString(configValue.dmm1_visa_id),
     dmm2_visa_id: readOptionalString(configValue.dmm2_visa_id),
     oscilloscope_visa_id: readOptionalString(configValue.oscilloscope_visa_id),
+    moku_address: readOptionalString(configValue.moku_address),
     power_supply_visa_id: readOptionalString(configValue.power_supply_visa_id),
     relay_port: readOptionalString(configValue.relay_port),
     voltage_stages: normalizeVoltageStages(configValue.voltage_stages),
     relay_ch1_stages: normalizeRelayStages(configValue.relay_ch1_stages, "relay_ch1_stages"),
     relay_ch2_stages: normalizeRelayStages(configValue.relay_ch2_stages, "relay_ch2_stages"),
     sampling_rate_hz: readNumber(configValue.sampling_rate_hz, 10, "sampling_rate_hz"),
+    moku_sample_rate_hz: readNumber(
+      configValue.moku_sample_rate_hz,
+      10000,
+      "moku_sample_rate_hz"
+    ),
     dmm_acquisition_mode: dmmAcquisitionMode,
     stop_after_seconds: stopAfterSeconds,
     record_camera: readBoolean(configValue.record_camera, false, "record_camera"),
@@ -256,6 +268,11 @@ function VisaSelectControl({
   onChange,
   disabled = false,
 }: VisaSelectControlProps) {
+  const selectResources =
+    value && !resources.some((resource) => resource.resource === value)
+      ? [{ resource: value, label: value }, ...resources]
+      : resources;
+
   return (
     <div className="min-w-0 space-y-1.5">
       <Label
@@ -269,12 +286,12 @@ function VisaSelectControl({
           <SelectValue placeholder="Select instrument" />
         </SelectTrigger>
         <SelectContent className="max-w-[calc(100vw-2rem)]">
-          {resources.length === 0 ? (
+          {selectResources.length === 0 ? (
             <SelectItem value="none" disabled>
               No instruments found
             </SelectItem>
           ) : (
-            resources.map((visa) => (
+            selectResources.map((visa) => (
               <SelectItem key={visa.resource} value={visa.resource}>
                 {visa.label}
               </SelectItem>
@@ -345,6 +362,7 @@ export default function Home() {
   const [oscilloscopeResources, setOscilloscopeResources] = useState<
     VisaResourceOption[]
   >([]);
+  const [mokuResources, setMokuResources] = useState<VisaResourceOption[]>([]);
   const [powerSupplyResources, setPowerSupplyResources] = useState<VisaResourceOption[]>([]);
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
 
@@ -354,6 +372,7 @@ export default function Home() {
   const [dmm1Visa, setDmm1Visa] = useState("");
   const [dmm2Visa, setDmm2Visa] = useState("");
   const [oscilloscopeVisa, setOscilloscopeVisa] = useState("");
+  const [mokuAddress, setMokuAddress] = useState("");
   const [dmm1Data, setDmm1Data] = useState<Array<{ time: number; voltage: number }>>([]);
   const [dmm2Data, setDmm2Data] = useState<Array<{ time: number; voltage: number }>>([]);
 
@@ -369,6 +388,7 @@ export default function Home() {
   // State for test configuration
   const [testName, setTestName] = useState("test");
   const [samplingRate, setSamplingRate] = useState(10);
+  const [mokuSampleRate, setMokuSampleRate] = useState(10000);
   const [dmmAcquisitionMode, setDmmAcquisitionMode] =
     useState<DmmAcquisitionMode>("fast");
   const [stopAtEnabled, setStopAtEnabled] = useState(false);
@@ -412,12 +432,14 @@ export default function Home() {
       const nextOscilloscopeResources = toOptions(
         data.oscilloscope_resources || data.visa_resources || []
       );
+      const nextMokuResources = toOptions(data.moku_resources || []);
       const nextPowerSupplyResources = toOptions(
         data.power_supply_resources || data.visa_resources || []
       );
 
       setDmmResources(nextDmmResources);
       setOscilloscopeResources(nextOscilloscopeResources);
+      setMokuResources(nextMokuResources);
       setPowerSupplyResources(nextPowerSupplyResources);
       setSerialPorts(data.serial_ports || []);
       setDmm1Visa((value) =>
@@ -431,6 +453,7 @@ export default function Home() {
           ? ""
           : value
       );
+      setMokuAddress((value) => value);
       setPowerSupplyVisa((value) =>
         value && !nextPowerSupplyResources.some((option) => option.resource === value)
           ? ""
@@ -447,6 +470,7 @@ export default function Home() {
     setDmm1Visa(config.dmm1_visa_id || "");
     setDmm2Visa(config.dmm2_visa_id || "");
     setOscilloscopeVisa(config.oscilloscope_visa_id || "");
+    setMokuAddress(config.moku_address || "");
     setPowerSupplyVisa(config.power_supply_visa_id || "");
     setRelayPort(config.relay_port || "");
     setVoltageStages(
@@ -459,6 +483,7 @@ export default function Home() {
     setRelayCh1Stages(config.relay_ch1_stages || []);
     setRelayCh2Stages(config.relay_ch2_stages || []);
     setSamplingRate(config.sampling_rate_hz || 10);
+    setMokuSampleRate(config.moku_sample_rate_hz || 10000);
     setDmmAcquisitionMode(config.dmm_acquisition_mode || "fast");
     setStopAtEnabled(
       typeof config.stop_after_seconds === "number" &&
@@ -712,6 +737,23 @@ export default function Home() {
       return null;
     }
 
+    if (measurementSource === "moku" && !mokuAddress) {
+      alert("Add a Moku:Pro address before using Moku mode.");
+      return null;
+    }
+
+    if (
+      measurementSource === "moku" &&
+      (!Number.isFinite(mokuSampleRate) || mokuSampleRate < 10)
+    ) {
+      alert("Moku:Pro sample rate must be at least 10 Hz.");
+      return null;
+    }
+    if (measurementSource === "moku" && mokuSampleRate > 1000000) {
+      alert("Moku:Pro API logging sample rate must be at most 1 MSa/s.");
+      return null;
+    }
+
     if (voltageStages.length > 0 && !powerSupplyVisa) {
       alert("Add a power supply VISA ID before using power supply stages.");
       return null;
@@ -778,12 +820,14 @@ export default function Home() {
       dmm1_visa_id: dmm1Visa || null,
       dmm2_visa_id: dmm2Visa || null,
       oscilloscope_visa_id: oscilloscopeVisa || null,
+      moku_address: mokuAddress || null,
       power_supply_visa_id: powerSupplyVisa || null,
       relay_port: relayPort || null,
       voltage_stages: normalizedVoltageStages,
       relay_ch1_stages: relayCh1Stages,
       relay_ch2_stages: relayCh2Stages,
-      sampling_rate_hz: samplingRate,
+      sampling_rate_hz: measurementSource === "moku" ? 10 : samplingRate,
+      moku_sample_rate_hz: mokuSampleRate,
       dmm_acquisition_mode: dmmAcquisitionMode,
       stop_after_seconds: stopAtEnabled ? stopAfterSeconds : null,
       record_camera: recordCamera,
@@ -797,6 +841,8 @@ export default function Home() {
     dmm2Visa,
     dmmAcquisitionMode,
     measurementSource,
+    mokuAddress,
+    mokuSampleRate,
     oscilloscopeVisa,
     powerSupplyVisa,
     recordCamera,
@@ -906,6 +952,9 @@ export default function Home() {
       if (data.oscilloscope_csv_path) {
         savedPaths.push(`Oscilloscope waveform:`, data.oscilloscope_csv_path);
       }
+      if (data.moku_csv_path) {
+        savedPaths.push(`Moku:Pro waveform:`, data.moku_csv_path);
+      }
       alert(savedPaths.join("\n"));
     } catch (error) {
       console.error("Error stopping measurement:", error);
@@ -936,6 +985,8 @@ export default function Home() {
   );
   const cameraDownloadDisabled =
     isMeasuring || isStarting || cameraStatus.recording || isCameraDownloadRunning;
+  const firstTraceTitle = measurementSource === "dmm" ? "DMM 1" : "CH1 voltage";
+  const secondTraceTitle = measurementSource === "dmm" ? "DMM 2" : "CH2 voltage";
 
   return (
     <div className="min-h-screen bg-background">
@@ -1031,7 +1082,7 @@ export default function Home() {
           <div className="min-w-0 space-y-6">
             <Card>
               <CardContent className="space-y-4 p-4">
-                <fieldset className="grid gap-3 sm:grid-cols-2">
+                <fieldset className="grid gap-3 sm:grid-cols-3">
                   <legend className="sr-only">Voltage measurement source</legend>
                   <MeasurementSourceOption
                     id="measurement-source-dmm"
@@ -1049,6 +1100,14 @@ export default function Home() {
                     onChange={setMeasurementSource}
                     disabled={isMeasuring || isStarting}
                   />
+                  <MeasurementSourceOption
+                    id="measurement-source-moku"
+                    label="Moku:Pro"
+                    value="moku"
+                    selectedValue={measurementSource}
+                    onChange={setMeasurementSource}
+                    disabled={isMeasuring || isStarting}
+                  />
                 </fieldset>
 
                 {measurementSource === "oscilloscope" ? (
@@ -1058,6 +1117,15 @@ export default function Home() {
                     value={oscilloscopeVisa}
                     resources={oscilloscopeResources}
                     onChange={setOscilloscopeVisa}
+                    disabled={isMeasuring || isStarting}
+                  />
+                ) : measurementSource === "moku" ? (
+                  <VisaSelectControl
+                    id="moku-address"
+                    label="Moku:Pro"
+                    value={mokuAddress}
+                    resources={mokuResources}
+                    onChange={setMokuAddress}
                     disabled={isMeasuring || isStarting}
                   />
                 ) : (
@@ -1080,59 +1148,68 @@ export default function Home() {
                     />
                   </div>
                 )}
-                {measurementSource === "dmm" ? (
+                {measurementSource === "dmm" || measurementSource === "moku" ? (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label
                         htmlFor="sampling-rate"
                         className="text-xs uppercase tracking-wide text-muted-foreground"
                       >
-                        Sample Rate (Hz)
+                        {measurementSource === "moku" ? "Moku Rate (Hz)" : "Sample Rate (Hz)"}
                       </Label>
                       <Input
                         id="sampling-rate"
                         type="number"
-                        value={samplingRate}
-                        onChange={(e) => setSamplingRate(parseFloat(e.target.value) || 10)}
+                        value={measurementSource === "moku" ? mokuSampleRate : samplingRate}
+                        onChange={(e) => {
+                          const value = parseFloat(e.target.value) || 10;
+                          if (measurementSource === "moku") {
+                            setMokuSampleRate(value);
+                          } else {
+                            setSamplingRate(value);
+                          }
+                        }}
                         disabled={isMeasuring || isStarting}
-                        min={1}
-                        max={300}
+                        min={measurementSource === "moku" ? 10 : 1}
+                        max={measurementSource === "moku" ? 1000000 : 300}
                         className="h-9"
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="dmm-acquisition-mode"
-                        className="text-xs uppercase tracking-wide text-muted-foreground"
-                      >
-                        DMM Mode
-                      </Label>
-                      <Select
-                        value={dmmAcquisitionMode}
-                        onValueChange={(value) =>
-                          setDmmAcquisitionMode(value as DmmAcquisitionMode)
-                        }
-                        disabled={isMeasuring || isStarting}
-                      >
-                        <SelectTrigger id="dmm-acquisition-mode" className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="fast">Fast (0.02 PLC)</SelectItem>
-                          <SelectItem value="low_noise">Low noise (1 PLC)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {measurementSource === "dmm" ? (
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="dmm-acquisition-mode"
+                          className="text-xs uppercase tracking-wide text-muted-foreground"
+                        >
+                          DMM Mode
+                        </Label>
+                        <Select
+                          value={dmmAcquisitionMode}
+                          onValueChange={(value) =>
+                            setDmmAcquisitionMode(value as DmmAcquisitionMode)
+                          }
+                          disabled={isMeasuring || isStarting}
+                        >
+                          <SelectTrigger id="dmm-acquisition-mode" className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fast">Fast (0.02 PLC)</SelectItem>
+                            <SelectItem value="low_noise">Low noise (1 PLC)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </CardContent>
             </Card>
             <DMMGraph
-              title="DMM 1"
+              title={firstTraceTitle}
               data={dmm1Data}
             />
             <DMMGraph
-              title="DMM 2"
+              title={secondTraceTitle}
               data={dmm2Data}
             />
           </div>

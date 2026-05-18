@@ -99,8 +99,8 @@ Once the app is running, the dropdowns will show:
 
 ### 2. Select Instruments
 
-- Choose `DMM` or `Oscilloscope` as the measurement source
-- Choose VISA IDs for DMM1/DMM2, or the oscilloscope VISA ID
+- Choose `DMM`, `Oscilloscope`, or `Moku:Pro` as the measurement source
+- Choose VISA IDs for DMM1/DMM2 or oscilloscope, or the Moku resource discovered by `mokucli list`
 - Choose VISA ID for Power Supply
 - Choose Serial Port for Relay Board
 
@@ -146,6 +146,8 @@ user-data/sessions/2025-10-13_14-30-15_test1/
 ├── readings.csv                         # DMM readings, or timing-only rows in oscilloscope mode
 ├── oscilloscope_waveform.csv            # CH1/CH2 waveform export in oscilloscope mode
 ├── oscilloscope_waveform_metadata.json  # Scope export metadata
+├── moku_waveform.csv                     # CH1/CH2 waveform export in Moku mode
+├── moku_waveform_metadata.json           # Moku export metadata
 ├── config.json                          # Test configuration
 ├── log.txt                              # Session log and timing events
 └── <camera-file>.mp4                    # Downloaded/compressed camera video

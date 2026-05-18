@@ -19,6 +19,9 @@ This is a live audit list for behavior/documentation mismatches and code risks f
 5. **No tests cover the FastAPI run lifecycle.**
    Add tests for `start -> status -> auto-stop -> output paths -> auto-download status` using mock instruments. This would catch regressions in agent/browser shared-control behavior.
 
+6. **Moku:Pro acquisition still needs a full-run validation.**
+   MokuOS was updated, Moku:Pro bitstreams were downloaded, and a short Moku logger/controller run wrote `moku_waveform.csv`. Before relying on Moku-mode acquisition for experiment data, run a short hardware-connected preset to validate signal polarity/ranges, file download/conversion, and sync.
+
 ## Documentation Mismatches Fixed In This Pass
 
 - README and quickstart used the old button labels `Start Measurement` and `Stop Measurement`.

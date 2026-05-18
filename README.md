@@ -15,6 +15,7 @@ The backend is the shared control plane. See [docs/OPERATION.md](docs/OPERATION.
 | --- | --- | --- |
 | DMM x2 | Keithley 2110 | Slow voltage checks and DMM-mode logging |
 | Oscilloscope | Tektronix TBS 2000B series | Full-record CH1/CH2 capture for relay-edge transients |
+| Moku:Pro | Liquid Instruments Moku:Pro | Full-run CH1/CH2 high-rate voltage logging |
 | Power supply | IT6412 | Programmed voltage stages |
 | Relay board | Devantech USB-RLY08C | Programmed relay switching |
 | Camera | Canon 2000D DSLR | Synchronized video recording |
@@ -39,6 +40,14 @@ uv run python3 scripts/run_experiment_config_http.py \
   --leave-services-running
 ```
 
+Moku:Pro preset:
+
+```bash
+uv run python3 scripts/run_experiment_config_http.py \
+  step_voltage_relay2_750s_moku.json \
+  --leave-services-running
+```
+
 Open `http://localhost:3000` during the run to monitor the active config, elapsed time, live data, camera state, and runtime events.
 
 ## Session Output
@@ -54,6 +63,8 @@ user-data/sessions/<timestamp>_<test_name>/
   readings.csv
   oscilloscope_waveform.csv
   oscilloscope_waveform_metadata.json
+  moku_waveform.csv
+  moku_waveform_metadata.json
   oscilloscope_waveform.svg
   oscilloscope_waveform_analysis.svg
   <camera-recording>.mp4

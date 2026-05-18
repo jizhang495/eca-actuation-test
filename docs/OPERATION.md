@@ -30,11 +30,19 @@ uv run python3 scripts/run_experiment_config_http.py \
   --leave-services-running
 ```
 
+For the Moku:Pro preset, use:
+
+```bash
+uv run python3 scripts/run_experiment_config_http.py \
+  step_voltage_relay2_750s_moku.json \
+  --leave-services-running
+```
+
 The agent script starts missing app/camera services unless `--no-start-services` is supplied. It uses the preset endpoint above, so it behaves like loading a saved config in the browser and clicking Start.
 
 ## Measurement Timing
 
-The run clock `t0` is defined inside `MeasurementController.start_measurement`, after instruments are connected, the camera has been prepared if enabled, the oscilloscope has been started if oscilloscope mode is enabled, and the configured ready delay has elapsed.
+The run clock `t0` is defined inside `MeasurementController.start_measurement`, after instruments are connected, the camera has been prepared if enabled, high-rate electrical acquisition has been started when needed, and the configured ready delay has elapsed.
 
 Before `t0`:
 
@@ -42,7 +50,8 @@ Before `t0`:
 2. Instruments are connected and configured.
 3. If `record_camera` is true, the camera service prepares the Canon EDSDK session without starting recording.
 4. If `measurement_source` is `oscilloscope`, the scope acquisition is started before the ready delay so it is already running at `t0`.
-5. `camera_ready_delay_seconds` is applied as a general hardware ready delay, not only a camera delay.
+5. If `measurement_source` is `moku`, the Moku:Pro Data Logger is started before the ready delay and the samples before `t0` are cropped from the app CSV.
+6. `camera_ready_delay_seconds` is applied as a general hardware ready delay, not only a camera delay.
 
 At `t0`:
 
@@ -53,10 +62,10 @@ At `t0`:
 
 At stop:
 
-1. Oscilloscope stop and camera stop are scheduled together when both are active.
+1. Oscilloscope or Moku stop and camera stop are scheduled together when active.
 2. Voltage and relay control tasks are cancelled.
 3. DMM/readings logging is finalized.
-4. Oscilloscope waveforms are exported when in oscilloscope mode.
+4. Oscilloscope or Moku waveforms are exported when in those high-rate modes.
 5. Instruments are disconnected.
 6. If auto-download is enabled for a camera run, the post-run video transfer task starts after the measurement has fully stopped.
 
@@ -111,6 +120,49 @@ uv run python3 scripts/plot_oscilloscope_waveform.py \
 ```
 
 The Tektronix full-record setup is configured by the backend. The configured record span includes the ready delay plus the planned run duration so the exported data can cover `t=0` through the stop time.
+
+### Moku:Pro Mode
+
+Moku mode uses the Moku:Pro Data Logger through `mokucli`. It records CH1/CH2 continuously to the Moku internal storage, then the app downloads and converts the `.li` file after stop.
+
+Install MokuCLI by following Liquid Instruments' instructions:
+
+```text
+https://apis.liquidinstruments.com/cli/getting-started/install.html
+```
+
+Verify discovery before using the app:
+
+```bash
+mokucli list
+```
+
+Download the local Moku:Pro instrument bitstreams once:
+
+```bash
+mokucli instrument download 4.2.2 --hw-version mokupro
+```
+
+The app lists discovered Moku devices as `MOKU::...` resources. If the Moku is USB-connected and only has an IPv6 link-local address, update MokuOS if API commands fail, or run a MokuCLI proxy and use the proxy address in the config.
+
+Moku presets use `sampling_rate_hz` for the app's lightweight timing loop and `moku_sample_rate_hz` for the actual Data Logger file rate. The current Moku API command path accepts `moku_sample_rate_hz` from 10 Sa/s to 1 MSa/s; the 750 s preset uses 10 kSa/s.
+
+Moku output files:
+
+```text
+moku_waveform.csv
+moku_waveform_metadata.json
+<raw-moku-file>.li
+<converted-moku-file>.csv
+```
+
+`moku_waveform.csv` uses the same columns as `oscilloscope_waveform.csv`, so the same plotting helper can be used:
+
+```bash
+uv run python3 scripts/plot_oscilloscope_waveform.py \
+  user-data/sessions/<session>/moku_waveform.csv \
+  --analysis-output user-data/sessions/<session>/moku_waveform_analysis.svg
+```
 
 ## Camera And Video Output
 
@@ -171,6 +223,20 @@ user-data/sessions/<timestamp>_<test_name>/
   <camera>.mp4                 # if video was downloaded/converted
 ```
 
+Typical Moku-mode session:
+
+```text
+user-data/sessions/<timestamp>_<test_name>/
+  readings.csv                 # timing/status rows, not high-rate Moku data
+  moku_waveform.csv
+  moku_waveform_metadata.json
+  <raw-moku-file>.li
+  <converted-moku-file>.csv
+  config.json
+  log.txt
+  <camera>.mp4                 # if video was downloaded/converted
+```
+
 Raw camera movies are intentionally kept outside the session folder:
 
 ```text
@@ -182,6 +248,7 @@ user-data/big-videos/<camera-file>.MOV.json
 
 - `step_voltage_relay2_750s.json`: DMM-based 750 s full run.
 - `step_voltage_relay2_750s_oscilloscope.json`: oscilloscope-based 750 s full run.
+- `step_voltage_relay2_750s_moku.json`: Moku:Pro-based 750 s full run.
 - `scope_0p2v_relay2_single_pulse_test.json`: short oscilloscope/relay test preset.
 
-The two full-run presets currently use camera recording, auto-stop at 750 s, and auto-download/compress after the run.
+The full-run presets currently use camera recording, auto-stop at 750 s, and auto-download/compress after the run.

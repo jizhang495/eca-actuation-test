@@ -16,6 +16,8 @@ Detailed setup instructions for the ECA Testing Webapp.
 - VISA drivers (NI-VISA recommended)
 - USB drivers for instruments
 - ffmpeg for MOV to MP4 conversion when camera download/compression is used
+- MokuCLI for Moku:Pro logging. Follow Liquid Instruments' install guide:
+  `https://apis.liquidinstruments.com/cli/getting-started/install.html`
 
 ## Step-by-Step Setup
 
@@ -113,6 +115,24 @@ COM4
 3. Connect CH1 to the applied voltage signal
 4. Connect CH2 to the current shunt voltage; the app converts current as `ch2_voltage / 330`
 5. Set the probe attenuation on the scope to match the physical probe before a run
+
+#### Moku:Pro
+1. Connect Moku:Pro to the computer or network.
+2. Install `mokucli` using Liquid Instruments' guide:
+   `https://apis.liquidinstruments.com/cli/getting-started/install.html`
+3. Verify discovery:
+   ```bash
+   mokucli list
+   ```
+4. Update MokuOS if API commands report that the device is too old.
+5. Download the local Moku:Pro instrument bitstreams once:
+   ```bash
+   mokucli instrument download 4.2.2 --hw-version mokupro
+   ```
+6. Connect Input 1 to the applied voltage signal.
+7. Connect Input 2 to the current shunt voltage; the app converts current as `ch2_voltage / 330`.
+8. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource.
+9. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
 
 #### Relay Board (USB-RLY08C)
 1. Connect via USB
@@ -331,7 +351,7 @@ For DMM sampling rates >10 Hz:
 3. Increase buffer sizes in instrument drivers
 4. Consider dedicated instrument PC
 
-For relay-edge current peaks, use oscilloscope mode rather than relying on DMM acquisition. The current full-record Tektronix mode starts acquisition before `t0`, stops at measurement stop, and writes `oscilloscope_waveform.csv` plus metadata into the session folder.
+For relay-edge current peaks, use oscilloscope or Moku:Pro mode rather than relying on DMM acquisition. Tektronix mode writes `oscilloscope_waveform.csv`; Moku mode writes `moku_waveform.csv`.
 
 ### Network Performance
 

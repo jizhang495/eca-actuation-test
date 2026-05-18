@@ -55,6 +55,7 @@ The app can run without physical hardware. If no real VISA resources are found, 
 | DMM1 | `MOCK::DMM::DMM1::INSTR` | Simulated voltage reading |
 | DMM2 | `MOCK::DMM::DMM2::INSTR` | Simulated voltage reading |
 | Oscilloscope | `MOCK::SCOPE::OSC1::INSTR` | Simulated CH1/CH2 waveform export |
+| Moku:Pro | `MOKU::MOCK::PRO` | Simulated CH1/CH2 logger export |
 | Power supply | `MOCK::POWER::IT6412::INSTR` | Simulated voltage output |
 | Relay board | `MOCK_COM3` | Simulated relay switching |
 | Camera | mock service mode | Simulated camera status |

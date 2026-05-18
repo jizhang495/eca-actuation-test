@@ -8,9 +8,16 @@ from datetime import datetime
 from typing import Optional
 import pyvisa
 
-from instruments import KeithleyDMM, Oscilloscope, IT6412PowerSupply, USB_RLY08C
+from instruments import (
+    KeithleyDMM,
+    MokuProDatalogger,
+    Oscilloscope,
+    IT6412PowerSupply,
+    USB_RLY08C,
+)
 from instruments.mock import (
     MockKeithleyDMM,
+    MockMokuProDatalogger,
     MockOscilloscope,
     MockIT6412PowerSupply,
     MockUSB_RLY08C,
@@ -48,14 +55,20 @@ class MeasurementController:
                 test_dmm = KeithleyDMM()
                 available_devices = test_dmm.list_available_devices()
                 usbtmc_devices = Oscilloscope.discover_usbtmc_devices()
-                use_mock = len(available_devices) == 0 and len(usbtmc_devices) == 0
+                moku_devices = MokuProDatalogger.discover_devices(timeout_seconds=1.0)
+                use_mock = (
+                    len(available_devices) == 0
+                    and len(usbtmc_devices) == 0
+                    and len(moku_devices) == 0
+                )
                 if use_mock:
                     logger.warning("No VISA devices detected - using MOCK instruments")
                 else:
                     logger.info(
-                        "Found %s VISA devices and %s USBTMC devices",
+                        "Found %s VISA devices, %s USBTMC devices, and %s Moku devices",
                         len(available_devices),
                         len(usbtmc_devices),
+                        len(moku_devices),
                     )
             except Exception as e:
                 logger.warning(f"Error detecting VISA devices: {e} - using MOCK instruments")
@@ -67,6 +80,7 @@ class MeasurementController:
             self.dmm1 = MockKeithleyDMM(name="DMM1")
             self.dmm2 = MockKeithleyDMM(name="DMM2")
             self.oscilloscope = MockOscilloscope()
+            self.moku = MockMokuProDatalogger()
             self.power_supply = MockIT6412PowerSupply()
             self.relay_board = MockUSB_RLY08C()
             self.use_mock = True
@@ -75,6 +89,7 @@ class MeasurementController:
             self.dmm1 = KeithleyDMM()
             self.dmm2 = KeithleyDMM()
             self.oscilloscope = Oscilloscope()
+            self.moku = MokuProDatalogger()
             self.power_supply = IT6412PowerSupply()
             self.relay_board = USB_RLY08C()
             self.use_mock = False
@@ -116,8 +131,11 @@ class MeasurementController:
         self._auto_stop_task: Optional[asyncio.Task] = None
         self._camera_start_task: Optional[asyncio.Task] = None
         self._camera_start_log_task: Optional[asyncio.Task] = None
+        self._moku_stop_elapsed: Optional[float] = None
         self._oscilloscope_waveform_csv_path: Optional[str] = None
         self._oscilloscope_waveform_metadata_path: Optional[str] = None
+        self._moku_waveform_csv_path: Optional[str] = None
+        self._moku_waveform_metadata_path: Optional[str] = None
         self._record_camera_for_session = False
         self._relay_stage_tasks: list[asyncio.Task] = []
         self._relay_lock = asyncio.Lock()
@@ -172,6 +190,28 @@ class MeasurementController:
                 await asyncio.to_thread(self.oscilloscope.start_acquisition)
                 self._record_event("Oscilloscope acquisition started")
 
+            if config.measurement_source == "moku" and self.moku.is_connected:
+                moku_duration = self._planned_high_rate_record_duration(config)
+                if not moku_duration:
+                    raise RuntimeError(
+                        "Moku:Pro mode requires auto-stop or scheduled stages "
+                        "so the logger duration is known"
+                    )
+                moku_response = await asyncio.to_thread(
+                    self.moku.start_logging,
+                    moku_duration,
+                    config.moku_sample_rate_hz,
+                    config.test_name,
+                    "ECA app synchronized run",
+                )
+                self._record_event(
+                    "Moku:Pro logging started before t0: "
+                    f"target {moku_duration:g} s, "
+                    "sample rate "
+                    f"{moku_response.get('rate') or moku_response.get('sample_rate', config.moku_sample_rate_hz)} Sa/s, "
+                    f"file {moku_response.get('file_name', 'unknown')}"
+                )
+
             await self._apply_ready_delay(config.camera_ready_delay_seconds)
         except Exception as e:
             logger.error(f"Failed to start measurement: {e}")
@@ -220,15 +260,25 @@ class MeasurementController:
         self._auto_stop_task = None
         self._oscilloscope_waveform_csv_path = None
         self._oscilloscope_waveform_metadata_path = None
+        self._moku_waveform_csv_path = None
+        self._moku_waveform_metadata_path = None
+        self._moku_stop_elapsed = None
         self._record_event("Measurement t0")
         self._record_event(f"Measurement source: {config.measurement_source}")
         if config.measurement_source == "dmm":
             self._record_event(f"DMM acquisition mode: {config.dmm_acquisition_mode}")
-        elif self.oscilloscope.is_connected:
+        elif config.measurement_source == "oscilloscope" and self.oscilloscope.is_connected:
             self._record_event(
                 "Oscilloscope CH1/CH2 full-record data will be exported to "
                 "oscilloscope_waveform.csv at stop; readings.csv is timing-only "
                 "in oscilloscope mode"
+            )
+        elif config.measurement_source == "moku" and self.moku.is_connected:
+            self._record_moku_start_timing()
+            self._record_event(
+                "Moku:Pro CH1/CH2 logger data will be exported to "
+                "moku_waveform.csv at stop; readings.csv is timing-only "
+                "in Moku mode"
             )
 
         if config.record_camera:
@@ -407,6 +457,8 @@ class MeasurementController:
         stop_requested_perf = time.perf_counter()
         oscilloscope_stop_elapsed = None
         oscilloscope_stop_task = None
+        moku_stop_task = None
+        moku_stop_elapsed = None
         camera_stop_task = None
         camera_stop_request_elapsed = None
         if (
@@ -418,6 +470,18 @@ class MeasurementController:
             oscilloscope_stop_elapsed = max(0.0, stop_requested_perf - self._start_monotonic)
             oscilloscope_stop_task = asyncio.create_task(
                 asyncio.to_thread(self.oscilloscope.stop_acquisition)
+            )
+
+        if (
+            self.current_config
+            and self.current_config.measurement_source == "moku"
+            and self.moku.is_connected
+            and self._start_monotonic is not None
+        ):
+            moku_stop_elapsed = max(0.0, stop_requested_perf - self._start_monotonic)
+            self._moku_stop_elapsed = moku_stop_elapsed
+            moku_stop_task = asyncio.create_task(
+                asyncio.to_thread(self.moku.stop_logging)
             )
 
         if self._record_camera_for_session and self.camera.is_recording:
@@ -434,10 +498,10 @@ class MeasurementController:
         for task in self._relay_stage_tasks:
             task.cancel()
 
-        if oscilloscope_stop_task or camera_stop_task:
+        if oscilloscope_stop_task or moku_stop_task or camera_stop_task:
             tasks = [
                 task
-                for task in (oscilloscope_stop_task, camera_stop_task)
+                for task in (oscilloscope_stop_task, moku_stop_task, camera_stop_task)
                 if task is not None
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -455,6 +519,20 @@ class MeasurementController:
                     self._record_event(
                         "Oscilloscope acquisition stopped",
                         elapsed_time=oscilloscope_stop_elapsed,
+                    )
+
+            if moku_stop_task:
+                result = result_by_task.get(moku_stop_task)
+                if isinstance(result, Exception):
+                    self._record_event(
+                        f"Moku:Pro logging stop failed: {result}",
+                        kind="error",
+                        elapsed_time=moku_stop_elapsed,
+                    )
+                else:
+                    self._record_event(
+                        "Moku:Pro logging stopped",
+                        elapsed_time=moku_stop_elapsed,
                     )
 
             if camera_stop_task:
@@ -579,6 +657,13 @@ class MeasurementController:
         ):
             await self._save_oscilloscope_waveform(oscilloscope_stop_elapsed)
 
+        if (
+            self.current_config
+            and self.current_config.measurement_source == "moku"
+            and self.moku.is_connected
+        ):
+            await self._save_moku_waveform(self._moku_stop_elapsed)
+
         # Disconnect instruments
         self._disconnect_instruments()
 
@@ -591,6 +676,8 @@ class MeasurementController:
             "log_path": str(self.data_logger.log_file),
             "oscilloscope_csv_path": self._oscilloscope_waveform_csv_path,
             "oscilloscope_metadata_path": self._oscilloscope_waveform_metadata_path,
+            "moku_csv_path": self._moku_waveform_csv_path,
+            "moku_metadata_path": self._moku_waveform_metadata_path,
         }
 
         self._record_event("Measurement stopped", source=control_source)
@@ -629,6 +716,32 @@ class MeasurementController:
         except Exception as e:
             logger.error("Failed to save oscilloscope waveform: %s", e)
             self._record_event(f"Oscilloscope waveform export failed: {e}", kind="error")
+
+    async def _save_moku_waveform(self, stop_elapsed_seconds: Optional[float]):
+        """Download and normalize the stopped Moku:Pro data logger record."""
+        try:
+            if not self.data_logger.current_session_dir:
+                raise RuntimeError("No active session directory for Moku export")
+
+            waveform = await asyncio.to_thread(
+                self.moku.capture_waveforms,
+                self.data_logger.current_session_dir,
+                stop_elapsed_seconds,
+                self._moku_t0_offset_seconds(),
+            )
+            if not waveform or not self._has_oscilloscope_waveform_data(waveform):
+                self._record_event("Moku:Pro waveform export produced no data", kind="warning")
+                return
+
+            csv_path, metadata_path = self.data_logger.save_moku_waveform(waveform)
+            self._moku_waveform_csv_path = str(csv_path) if csv_path else None
+            self._moku_waveform_metadata_path = str(metadata_path) if metadata_path else None
+            if csv_path:
+                self._record_event(f"Moku:Pro waveform saved to {csv_path.name}")
+                self._record_moku_waveform_coverage(waveform)
+        except Exception as e:
+            logger.error("Failed to save Moku:Pro waveform: %s", e)
+            self._record_event(f"Moku:Pro waveform export failed: {e}", kind="error")
 
     @staticmethod
     def _has_oscilloscope_waveform_data(waveform: dict) -> bool:
@@ -689,6 +802,52 @@ class MeasurementController:
                 kind="warning",
             )
 
+    def _record_moku_waveform_coverage(self, waveform: dict) -> None:
+        rows = waveform.get("rows") or []
+        times = [
+            row.get("time")
+            for row in rows
+            if isinstance(row.get("time"), (int, float))
+        ]
+        if not times:
+            return
+
+        start_time = min(times)
+        end_time = max(times)
+        coverage_seconds = max(0.0, end_time - start_time)
+        self._record_event(
+            f"Moku:Pro waveform export covers {coverage_seconds:.6g} s "
+            f"from t={start_time:.6g} s to t={end_time:.6g} s"
+        )
+
+    def _record_moku_start_timing(self) -> None:
+        request_time = getattr(self.moku, "last_logging_start_request_monotonic", None)
+        ack_time = getattr(self.moku, "last_logging_start_ack_monotonic", None)
+        if self._start_monotonic is None or request_time is None:
+            return
+
+        request_before_t0_ms = (self._start_monotonic - request_time) * 1000
+        ack_before_t0_ms = (
+            (self._start_monotonic - ack_time) * 1000
+            if ack_time is not None
+            else None
+        )
+        ack_text = (
+            f"; acknowledged {ack_before_t0_ms:.3f} ms before t0"
+            if ack_before_t0_ms is not None
+            else ""
+        )
+        self._record_event(
+            "Moku:Pro logging command requested "
+            f"{request_before_t0_ms:.3f} ms before measurement t0{ack_text}"
+        )
+
+    def _moku_t0_offset_seconds(self) -> Optional[float]:
+        request_time = getattr(self.moku, "last_logging_start_request_monotonic", None)
+        if self._start_monotonic is None or request_time is None:
+            return None
+        return max(0.0, self._start_monotonic - request_time)
+
     async def _auto_stop_at_elapsed_time(self, stop_after_seconds: float):
         """Stop the run when the configured elapsed time is reached."""
         try:
@@ -734,6 +893,16 @@ class MeasurementController:
             raise RuntimeError("Oscilloscope mode requires a selected oscilloscope VISA ID")
 
         if (
+            config.measurement_source == "moku"
+            and not self.use_mock
+            and not config.moku_address
+        ):
+            raise RuntimeError("Moku:Pro mode requires a selected Moku address")
+
+        if config.measurement_source == "moku" and config.moku_sample_rate_hz < 10:
+            raise RuntimeError("Moku:Pro sample rate must be at least 10 Hz")
+
+        if (
             config.measurement_source == "dmm"
             and config.dmm_acquisition_mode == "low_noise"
             and config.sampling_rate_hz > 20
@@ -764,6 +933,10 @@ class MeasurementController:
                 )
                 self.oscilloscope.configure_voltage_channels()
                 logger.info("Mock Oscilloscope connected")
+            elif config.measurement_source == "moku":
+                self.moku.connect(config.moku_address or "MOKU::MOCK::PRO")
+                self.moku.configure_voltage_channels(config.moku_sample_rate_hz)
+                logger.info("Mock Moku:Pro connected")
             else:
                 self.dmm1.connect(config.dmm1_visa_id or "MOCK::DMM::DMM1::INSTR")
                 self.dmm1.configure_acquisition_mode(config.dmm_acquisition_mode)
@@ -792,7 +965,7 @@ class MeasurementController:
                         f"{error_detail}"
                 )
                 logger.info(f"Oscilloscope connected: {config.oscilloscope_visa_id}")
-                full_record_duration = self._planned_oscilloscope_record_duration(config)
+                full_record_duration = self._planned_high_rate_record_duration(config)
                 if full_record_duration:
                     settings = await asyncio.to_thread(
                         self.oscilloscope.configure_full_record,
@@ -805,6 +978,22 @@ class MeasurementController:
                         f"record length {settings.get('actual_record_length')}, "
                         f"sample rate {settings.get('actual_sample_rate_hz')} Sa/s"
                     )
+            elif config.measurement_source == "moku":
+                success = self.moku.connect(config.moku_address)
+                if not success:
+                    error_detail = (
+                        f": {self.moku.last_error}"
+                        if getattr(self.moku, "last_error", None)
+                        else ""
+                    )
+                    raise RuntimeError(
+                        f"Failed to connect Moku:Pro: {config.moku_address}{error_detail}"
+                    )
+                await asyncio.to_thread(
+                    self.moku.configure_voltage_channels,
+                    config.moku_sample_rate_hz,
+                )
+                logger.info("Moku:Pro connected: %s", config.moku_address)
             else:
                 # Connect real DMMs only if VISA ID provided
                 if config.dmm1_visa_id:
@@ -836,8 +1025,8 @@ class MeasurementController:
             await self._prime_voltage_reads(config.measurement_source)
 
     @staticmethod
-    def _planned_oscilloscope_record_duration(config: MeasurementConfig) -> Optional[float]:
-        """Return the elapsed time the scope should retain in memory."""
+    def _planned_high_rate_record_duration(config: MeasurementConfig) -> Optional[float]:
+        """Return the elapsed time a high-rate source should retain/log."""
         candidates = []
         if config.stop_after_seconds is not None:
             candidates.append(config.stop_after_seconds)
@@ -852,10 +1041,9 @@ class MeasurementController:
 
     async def _prime_voltage_reads(self, measurement_source: str):
         """Perform one unlogged read so setup latency does not hit sample 0."""
-        if measurement_source == "oscilloscope":
-            # In oscilloscope mode the scope records its own waveform. Reading
-            # the waveform during Roll acquisition makes the TBS 2000B display
-            # blink and does not improve the saved data.
+        if measurement_source in {"oscilloscope", "moku"}:
+            # In high-rate modes the instrument records its own waveform. The
+            # live readings.csv stream is timing/status only.
             return
 
         prime_tasks = []
@@ -872,6 +1060,7 @@ class MeasurementController:
         self.dmm1.disconnect()
         self.dmm2.disconnect()
         self.oscilloscope.disconnect()
+        self.moku.disconnect()
         self.power_supply.disconnect()
         self.relay_board.disconnect()
         logger.info("All instruments disconnected")
@@ -907,10 +1096,8 @@ class MeasurementController:
                 elapsed = loop_start - self._start_monotonic
 
                 read_start = time.perf_counter()
-                if config.measurement_source == "oscilloscope":
-                    # The high-resolution oscilloscope record is exported at
-                    # stop. Polling waveform data during acquisition can disturb
-                    # the TBS display/record and is too slow for this loop.
+                if config.measurement_source in {"oscilloscope", "moku"}:
+                    # High-rate instruments export their CH1/CH2 records at stop.
                     dmm1_voltage, dmm2_voltage = None, None
                 else:
                     read_tasks = []
@@ -1138,6 +1325,11 @@ class MeasurementController:
                     "address": self.oscilloscope.visa_address
                 },
                 {
+                    "name": "Moku:Pro" + (" (MOCK)" if self.use_mock else ""),
+                    "connected": self.moku.is_connected,
+                    "address": self.moku.moku_address
+                },
+                {
                     "name": "Power Supply" + (" (MOCK)" if self.use_mock else ""),
                     "connected": self.power_supply.is_connected,
                     "address": self.power_supply.visa_address
@@ -1160,6 +1352,7 @@ class MeasurementController:
         if self.use_mock:
             visa_resources = self.dmm1.list_available_devices()
             serial_ports = MockUSB_RLY08C.list_available_ports()
+            moku_devices = self.moku.discover_devices()
             visa_details = [
                 {
                     "resource": resource,
@@ -1175,6 +1368,15 @@ class MeasurementController:
                 }
                 for resource in visa_resources
             ]
+            for device in moku_devices:
+                visa_details.append(
+                    {
+                        "resource": device["resource"],
+                        "idn": device.get("idn"),
+                        "kind": "moku",
+                        "label": device.get("label", device["resource"]),
+                    }
+                )
         else:
             visa_resources = self.dmm1.list_available_devices()
             serial_ports = USB_RLY08C.list_available_ports()
@@ -1199,6 +1401,22 @@ class MeasurementController:
                 detail["label"] = self._format_usbtmc_label(device)
                 visa_details.append(detail)
 
+            for device in MokuProDatalogger.discover_devices(timeout_seconds=1.0):
+                resource = str(device["resource"])
+                if resource in known_resources:
+                    continue
+
+                known_resources.add(resource)
+                visa_resources.append(resource)
+                visa_details.append(
+                    {
+                        "resource": resource,
+                        "idn": device.get("idn"),
+                        "kind": "moku",
+                        "label": device.get("label", resource),
+                    }
+                )
+
         dmm_resources = [item["resource"] for item in visa_details if item["kind"] == "dmm"]
         oscilloscope_resources = [
             item["resource"] for item in visa_details if item["kind"] == "oscilloscope"
@@ -1206,6 +1424,7 @@ class MeasurementController:
         power_supply_resources = [
             item["resource"] for item in visa_details if item["kind"] == "power_supply"
         ]
+        moku_resources = [item["resource"] for item in visa_details if item["kind"] == "moku"]
         unknown_resources = [
             item["resource"] for item in visa_details if item["kind"] == "unknown"
         ]
@@ -1214,6 +1433,7 @@ class MeasurementController:
             "visa_resources": visa_resources,
             "dmm_resources": dmm_resources + unknown_resources,
             "oscilloscope_resources": oscilloscope_resources + unknown_resources,
+            "moku_resources": moku_resources,
             "power_supply_resources": power_supply_resources + unknown_resources,
             "visa_details": visa_details,
             "serial_ports": serial_ports
@@ -1255,6 +1475,8 @@ class MeasurementController:
             )
         ):
             kind = "oscilloscope"
+        elif "MOKU" in upper_idn or upper_resource.startswith("MOKU::"):
+            kind = "moku"
         elif "11975::25618" in upper_resource:
             kind = "power_supply"
         elif "1510::8464" in upper_resource:
@@ -1270,6 +1492,7 @@ class MeasurementController:
 
         label_prefix = {
             "dmm": "DMM",
+            "moku": "Moku",
             "oscilloscope": "Scope",
             "power_supply": "Power",
         }.get(kind, "VISA")
