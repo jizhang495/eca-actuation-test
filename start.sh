@@ -134,6 +134,13 @@ start_service "Backend" 8000 "eca-actuation-test" "uv run run_backend.py" "backe
 # Wait for backend to start
 sleep 3
 
+# Next's development cache can be corrupted if a production build is run while
+# the dev server is active. Clear it before starting a fresh frontend server.
+if [ -z "$(get_port_pids 3000)" ] && [ -d "frontend/.next" ]; then
+    echo "Resetting frontend development cache..."
+    rm -rf frontend/.next
+fi
+
 # Start frontend
 start_service "Frontend" 3000 "frontend" "npm run dev" "frontend.log" FRONTEND_PID
 

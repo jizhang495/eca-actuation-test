@@ -6,28 +6,80 @@ echo "  ECA Testing Webapp - Stopping Services"
 echo "================================================"
 echo ""
 
-# Stop Python processes (Backend and Camera Service)
-echo "Stopping Python services (Backend, Camera)..."
-PYTHON_PIDS=$(pgrep -f "python.*run_backend.py\|python.*camera_service.py" 2>/dev/null)
-if [ -n "$PYTHON_PIDS" ]; then
-    echo "Stopping Python processes: $PYTHON_PIDS"
-    kill $PYTHON_PIDS 2>/dev/null
-    echo "✓ Python services stopped"
-else
-    echo "✓ No Python processes found"
-fi
+get_port_pids() {
+    local pids=""
 
-# Stop Node.js processes (Frontend)
-echo ""
-echo "Stopping Node.js services (Frontend)..."
-NODE_PIDS=$(pgrep -f "npm run dev\|next dev" 2>/dev/null)
-if [ -n "$NODE_PIDS" ]; then
-    echo "Stopping Node processes: $NODE_PIDS"
-    kill $NODE_PIDS 2>/dev/null
-    echo "✓ Node.js services stopped"
-else
-    echo "✓ No Node.js processes found"
-fi
+    if command -v fuser &> /dev/null; then
+        pids=$(fuser -n tcp "$1" 2>/dev/null | tr ' ' '\n' | sed '/^$/d')
+    fi
+
+    if [ -z "$pids" ] && command -v lsof &> /dev/null; then
+        pids=$(lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null)
+    fi
+
+    echo "$pids"
+}
+
+stop_pids() {
+    local label="$1"
+    shift
+    local pids
+    pids=$(printf "%s\n" "$@" | sed '/^$/d' | sort -u)
+
+    if [ -z "$pids" ]; then
+        echo "✓ No $label processes found"
+        return
+    fi
+
+    echo "Stopping $label processes: $(echo "$pids" | tr '\n' ' ')"
+    kill $pids 2>/dev/null || true
+
+    for _ in 1 2 3 4 5; do
+        local remaining=""
+        for pid in $pids; do
+            if kill -0 "$pid" 2>/dev/null; then
+                remaining="$remaining $pid"
+            fi
+        done
+        [ -z "$remaining" ] && break
+        sleep 1
+    done
+
+    local stubborn=""
+    for pid in $pids; do
+        if kill -0 "$pid" 2>/dev/null; then
+            stubborn="$stubborn $pid"
+        fi
+    done
+
+    if [ -n "$stubborn" ]; then
+        echo "Force stopping $label processes:$stubborn"
+        kill -9 $stubborn 2>/dev/null || true
+    fi
+}
+
+collect_pattern_pids() {
+    local pattern="$1"
+    pgrep -f "$pattern" 2>/dev/null | grep -v "^$$$" || true
+}
+
+# Stop known service process trees and any listeners on app ports. This catches
+# uv/npm wrapper processes as well as the Python/Next child processes.
+echo "Stopping app services..."
+SERVICE_PIDS=$( {
+    collect_pattern_pids "uv run run_backend.py"
+    collect_pattern_pids "python.*run_backend.py"
+    collect_pattern_pids "uv run camera_service.py"
+    collect_pattern_pids "python.*camera_service.py"
+    collect_pattern_pids "npm run dev"
+    collect_pattern_pids "next dev"
+    collect_pattern_pids "next-server"
+    get_port_pids 3000
+    get_port_pids 8000
+    get_port_pids 8001
+} | sed '/^$/d' | sort -u )
+
+stop_pids "app service" $SERVICE_PIDS
 
 # Wait a moment for processes to fully terminate
 sleep 2
