@@ -19,23 +19,13 @@ This is a live audit list for behavior/documentation mismatches and code risks f
 5. **No tests cover the FastAPI run lifecycle.**
    Add tests for `start -> status -> auto-stop -> output paths -> auto-download status` using mock instruments. This would catch regressions in agent/browser shared-control behavior.
 
-6. **Moku:Pro acquisition still needs a full-run validation.**
-   MokuOS was updated, Moku:Pro bitstreams were downloaded, and a short Moku logger/controller run wrote `moku_waveform.csv`. Before relying on Moku-mode acquisition for experiment data, run a short hardware-connected preset to validate signal polarity/ranges, file download/conversion, and sync.
+6. **Moku:Pro full-run data is not yet reliable enough for primary experiments.**
+   The 2026-05-18 Moku full run produced a valid `moku_waveform.csv`, but the data did not match the Tek oscilloscope run well enough to trust yet. Moku logged at 10 kSa/s, which is better time resolution than the Tek full-record capture at about 3.125 kSa/s, but the current-channel amplitude resolution was worse in this run: about 1.62 uA/count for Moku versus about 0.242 uA/count for Tek with the 330 ohm shunt. The zero-current noise was also higher on Moku, roughly a 6.5 uA 5-95% span versus roughly 1.7 uA on Tek.
 
-## Documentation Mismatches Fixed In This Pass
-
-- README and quickstart used the old button labels `Start Measurement` and `Stop Measurement`.
-- README described oscilloscope support as not changing scope horizontal settings; the backend now configures full-record scale/record length.
-- README and PRD still treated oscilloscope support as future work.
-- Camera documentation said video downloads go directly into the newest session folder; the current helper stores raw movies under `user-data/big-videos/` and converts an MP4 into the session folder.
-- Quickstart data-output examples omitted oscilloscope waveform files, metadata, and camera MP4 output.
-- Mock instrument docs omitted the mock oscilloscope.
-- Performance notes said only 500 points are displayed; the UI now keeps about 6000 live points.
-- `SETUP.md` suggested moving the backend to port 8001 when port 8000 was busy, which conflicts with the camera service. It now uses port 8002 as the example and calls out the frontend proxy update.
-- The Docker section in `SETUP.md` was presented as ready-to-run even though there are no Dockerfiles. It is now marked as an example only.
+   The larger problem is CH1 scaling: the Moku CH1 voltage appeared about 10x low, with the 0.8 V stage reading around 0.08 V. This may be a probe/input attenuation or scaling configuration issue. The Moku export also covered only about 747.95 s of a 750 s run, while the Tek export covered the full run. Keep using the Tek oscilloscope for production actuation runs until Moku CH1 scaling, CH2 noise/resolution, and full-duration coverage are fixed and revalidated with a short calibration preset.
 
 ## Lower Priority
 
 - `stop.sh`/`stop.ps1` stop broad Python/Node process patterns. That is convenient on a dedicated lab PC but risky on a shared development machine.
 - `camera_ready_delay_seconds` is now a general hardware ready delay. The JSON field name is kept for backward compatibility, but a future migration to `ready_delay_seconds` would be clearer.
-- The old `StartRecord.cpp` and `StopRecord.cpp` files are legacy examples. The current synchronized camera path uses the long-lived `CameraControl` daemon.
+- The old `StartRecord.cpp` and `StopRecord.cpp` files are legacy examples for labview. The current synchronized camera path uses the long-lived `CameraControl` daemon.
