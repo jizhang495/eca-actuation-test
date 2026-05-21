@@ -347,6 +347,12 @@ class MockMokuProDatalogger:
             "metadata": {
                 "source": "moku",
                 "instrument": "Mock Moku:Pro Data Logger",
+                "probe_attenuation": {"ch1": 10.0, "ch2": 1.0},
+                "frontend_ranges": {"ch1": "400mVpp", "ch2": "400mVpp"},
+                "voltage_scaling": (
+                    "mock rows already use normalized circuit voltage, matching "
+                    "the real Moku waveform export"
+                ),
                 "requested_sample_rate_hz": self._sample_rate_hz,
                 "stop_elapsed_seconds": stop_elapsed_seconds,
                 "t0_offset_seconds": t0_offset_seconds,

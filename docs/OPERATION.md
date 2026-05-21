@@ -147,6 +147,10 @@ The app lists discovered Moku devices as `MOKU::...` resources. If the Moku is U
 
 Moku presets use `sampling_rate_hz` for the app's lightweight timing loop and `moku_sample_rate_hz` for the actual Data Logger file rate. The current Moku API command path accepts `moku_sample_rate_hz` from 10 Sa/s to 1 MSa/s; the 750 s preset uses 10 kSa/s.
 
+The Moku wiring convention is CH1 applied voltage through a 10x probe and CH2 shunt voltage through 1x. The app configures both Moku inputs for `400mVpp` frontend range, then multiplies raw Input 1 values by 10 when writing `moku_waveform.csv`. `ch1_voltage` is therefore circuit voltage. `ch2_voltage` remains the 1x shunt voltage used for current conversion.
+
+Moku time alignment uses the `start_logging` acknowledgement timestamp when available, not the earlier command request timestamp, so the ready-delay samples are cropped correctly and the app CSV covers the full run.
+
 Moku output files:
 
 ```text

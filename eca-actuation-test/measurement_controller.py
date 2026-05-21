@@ -843,10 +843,15 @@ class MeasurementController:
         )
 
     def _moku_t0_offset_seconds(self) -> Optional[float]:
+        ack_time = getattr(self.moku, "last_logging_start_ack_monotonic", None)
         request_time = getattr(self.moku, "last_logging_start_request_monotonic", None)
-        if self._start_monotonic is None or request_time is None:
+        if self._start_monotonic is None:
             return None
-        return max(0.0, self._start_monotonic - request_time)
+
+        reference_time = ack_time if ack_time is not None else request_time
+        if reference_time is None:
+            return None
+        return max(0.0, self._start_monotonic - reference_time)
 
     async def _auto_stop_at_elapsed_time(self, stop_after_seconds: float):
         """Stop the run when the configured elapsed time is reached."""

@@ -31,6 +31,10 @@ class MokuProDatalogger:
     """
 
     RESOURCE_PREFIX = "MOKU::"
+    _CH1_PROBE_ATTENUATION = 10.0
+    _CH2_PROBE_ATTENUATION = 1.0
+    _CH1_FRONTEND_RANGE = "400mVpp"
+    _CH2_FRONTEND_RANGE = "400mVpp"
 
     def __init__(self, moku_address: Optional[str] = None):
         self.moku_address = moku_address
@@ -165,7 +169,7 @@ class MokuProDatalogger:
                     "channel": 1,
                     "impedance": "1MOhm",
                     "coupling": "DC",
-                    "range": "4Vpp",
+                    "range": self._CH1_FRONTEND_RANGE,
                     "strict": False,
                 },
             ),
@@ -176,7 +180,7 @@ class MokuProDatalogger:
                     "channel": 2,
                     "impedance": "1MOhm",
                     "coupling": "DC",
-                    "range": "400mVpp",
+                    "range": self._CH2_FRONTEND_RANGE,
                     "strict": False,
                 },
             ),
@@ -307,13 +311,26 @@ class MokuProDatalogger:
                 "converted_csv_path": str(converted_path),
                 "moku_file_name": self._log_file_name,
                 "source_columns": source_columns,
+                "probe_attenuation": {
+                    "ch1": self._CH1_PROBE_ATTENUATION,
+                    "ch2": self._CH2_PROBE_ATTENUATION,
+                },
+                "frontend_ranges": {
+                    "ch1": self._CH1_FRONTEND_RANGE,
+                    "ch2": self._CH2_FRONTEND_RANGE,
+                },
+                "voltage_scaling": (
+                    "moku_waveform.csv stores circuit voltage; raw Moku input "
+                    "columns are multiplied by the configured probe attenuation"
+                ),
                 "requested_sample_rate_hz": self._last_sample_rate_hz,
                 "requested_duration_seconds": self._last_duration_seconds,
                 "stop_elapsed_seconds": stop_elapsed_seconds,
                 "t0_offset_seconds": t0_offset_seconds,
                 "time_alignment": (
                     "time is relative to measurement t0; Moku samples before t0 "
-                    "are cropped from the app waveform CSV"
+                    "are cropped from the app waveform CSV using the logger start "
+                    "acknowledgement time when available"
                 ),
             },
             "rows": rows,
@@ -442,6 +459,8 @@ class MokuProDatalogger:
         offset = t0_offset_seconds or 0.0
         rows: list[dict] = []
         source_time0 = None
+        ch1_attenuation = cls._CH1_PROBE_ATTENUATION
+        ch2_attenuation = cls._CH2_PROBE_ATTENUATION
         for index, row in data[[time_column, ch1_column, ch2_column]].dropna().iterrows():
             source_time = float(row[time_column])
             source_time0 = source_time if source_time0 is None else source_time0
@@ -453,8 +472,8 @@ class MokuProDatalogger:
                 {
                     "time": aligned_time,
                     "scope_time": scope_time,
-                    "ch1_voltage": float(row[ch1_column]),
-                    "ch2_voltage": float(row[ch2_column]),
+                    "ch1_voltage": float(row[ch1_column]) * ch1_attenuation,
+                    "ch2_voltage": float(row[ch2_column]) * ch2_attenuation,
                     "sample_index": len(rows),
                     "ch1_sample_index": int(index),
                     "ch2_sample_index": int(index),

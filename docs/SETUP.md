@@ -129,8 +129,8 @@ COM4
    ```bash
    mokucli instrument download 4.2.2 --hw-version mokupro
    ```
-6. Connect Input 1 to the applied voltage signal.
-7. Connect Input 2 to the current shunt voltage; the app converts current as `ch2_voltage / 330`.
+6. Connect Input 1 to the applied voltage signal using the 10x probe. The app treats Moku Input 1 as 10x and writes normalized circuit voltage to `moku_waveform.csv`.
+7. Connect Input 2 to the current shunt voltage using 1x. The app converts current as `ch2_voltage / 330`.
 8. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource.
 9. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
 
