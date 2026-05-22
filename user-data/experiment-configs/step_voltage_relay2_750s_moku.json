@@ -4,7 +4,7 @@
   "dmm1_visa_id": null,
   "dmm2_visa_id": null,
   "oscilloscope_visa_id": null,
-  "moku_address": "MOKU::[fe80::7269:79ff:feb0:ca2%255]",
+  "moku_address": "MOKU::[fe80::7269:79ff:feb0:ca2%254]",
   "power_supply_visa_id": "USB0::11975::25618::800624011767410027::0::INSTR",
   "relay_port": "/dev/ttyACM0",
   "voltage_stages": [

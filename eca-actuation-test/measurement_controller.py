@@ -559,8 +559,9 @@ class MeasurementController:
                 if isinstance(result, Exception) or result is False:
                     detail = result if isinstance(result, Exception) else "command returned false"
                     self._record_event(
-                        f"Camera recording stop failed: {detail}",
-                        kind="error",
+                        "Camera recording stop was not acknowledged; "
+                        f"assuming camera already stopped and continuing: {detail}",
+                        kind="warning",
                         elapsed_time=camera_stop_ack_elapsed,
                     )
                 else:
@@ -646,8 +647,15 @@ class MeasurementController:
             and camera_stop_task is None
             and self.camera.is_recording
         ):
-            await self.camera.stop_recording()
-            self._record_event("Camera recording stopped")
+            stopped = await self.camera.stop_recording()
+            if stopped:
+                self._record_event("Camera recording stopped")
+            else:
+                self._record_event(
+                    "Camera recording stop was not acknowledged; "
+                    "assuming camera already stopped and continuing",
+                    kind="warning",
+                )
         elif self._record_camera_for_session and camera_stop_task is None:
             self._record_event("Camera was requested but was not recording at stop", kind="warning")
 

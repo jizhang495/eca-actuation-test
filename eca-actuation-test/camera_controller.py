@@ -122,12 +122,19 @@ class CameraController:
                     logger.info("Camera recording stopped")
                     return True
                 else:
-                    logger.error(f"Failed to stop recording: {response.text}")
+                    self._is_recording = False
+                    logger.warning(
+                        "Failed to stop recording; assuming camera is already stopped: %s",
+                        response.text,
+                    )
                     return False
                     
         except Exception as e:
-            logger.error(f"Error stopping camera recording: {e}")
             self._is_recording = False
+            logger.warning(
+                "Error stopping camera recording; assuming camera is already stopped: %s",
+                e,
+            )
             return False
 
     def get_status(self) -> dict:
