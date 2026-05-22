@@ -54,6 +54,16 @@ def parse_args() -> argparse.Namespace:
         help="Column to use for the shared x axis. scope_time is only available for waveform CSVs.",
     )
     parser.add_argument(
+        "--x-min",
+        type=float,
+        help="Minimum x-axis value to plot, in the selected --x-column units.",
+    )
+    parser.add_argument(
+        "--x-max",
+        type=float,
+        help="Maximum x-axis value to plot, in the selected --x-column units.",
+    )
+    parser.add_argument(
         "--shunt-ohms",
         type=float,
         default=DEFAULT_SHUNT_OHMS,
@@ -124,6 +134,27 @@ def read_waveform(csv_path: Path) -> tuple[pd.DataFrame, str, str]:
 
 def default_output_path(csv_path: Path) -> Path:
     return csv_path.with_suffix(".svg")
+
+
+def filter_x_range(
+    data: pd.DataFrame,
+    x_column: str,
+    x_min: float | None,
+    x_max: float | None,
+) -> pd.DataFrame:
+    if x_column not in data.columns:
+        raise RuntimeError(f"CSV does not contain x-axis column: {x_column}")
+    if x_min is not None and x_max is not None and x_min >= x_max:
+        raise RuntimeError("--x-min must be less than --x-max")
+
+    filtered = data
+    if x_min is not None:
+        filtered = filtered[filtered[x_column] >= x_min]
+    if x_max is not None:
+        filtered = filtered[filtered[x_column] <= x_max]
+    if filtered.empty:
+        raise RuntimeError("Selected x-axis range contains no plottable waveform rows")
+    return filtered
 
 
 def peak_preserving_downsample(
@@ -315,6 +346,7 @@ def main() -> int:
     try:
         validate_input(args.csv_path, args.shunt_ohms)
         data, voltage_column, current_voltage_column = read_waveform(args.csv_path)
+        data = filter_x_range(data, args.x_column, args.x_min, args.x_max)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         plot_waveform(
             data=data,
