@@ -1,0 +1,21 @@
+# Code adapted by Ji Zhang from http://blog.svenbrauch.de/2012/11/25/blender-exporting-camera-tracking/
+# Last modified 2024.11.08
+# Paste the following script onto the Python API in Blender VFX
+
+import bpy
+D = bpy.data
+
+for clip in D.movieclips:
+    track0 = clip.tracking.tracks[1]
+    coords0 = track0.markers.find_frame(1).co.xy
+    track = clip.tracking.tracks[0]    
+    fn = 'C:/Users/COMSOL/Documents/Users/Ji/actuationTests/data/{0}.csv'.format(clip.name.split('.')[0].split('_')[1])
+    with open(fn, 'w') as f:
+        frameno = 0
+        while True:
+            markerAtFrame = track.markers.find_frame(frameno)
+            if not markerAtFrame:
+                break
+            coords = markerAtFrame.co.xy
+            f.write('{0}, {1}, {2}\n'.format(frameno/50, -(coords[0]-coords0[0])*1280, -(coords[1]-coords0[1])*720))
+            frameno += 1
