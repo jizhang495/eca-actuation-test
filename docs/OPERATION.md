@@ -254,5 +254,6 @@ user-data/big-videos/<camera-file>.MOV.json
 - `step_voltage_relay2_750s_oscilloscope.json`: oscilloscope-based 750 s full run.
 - `step_voltage_relay2_750s_moku.json`: Moku:Pro-based 750 s full run.
 - `scope_0p2v_relay2_single_pulse_test.json`: short oscilloscope/relay test preset.
+- `moku_0p2v_relay2_single_pulse_<rate>.json`: short Moku rate/noise test presets at 1, 2, 5, and 10 kSa/s.
 
 The full-run presets currently use camera recording, auto-stop at 750 s, and auto-download/compress after the run.

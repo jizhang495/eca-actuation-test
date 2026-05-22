@@ -98,6 +98,7 @@ class MeasurementController:
         self.data_logger = DataLogger()
 
         self.is_measuring = False
+        self._is_stopping = False
         self.current_session_id: Optional[str] = None
         self.current_config: Optional[MeasurementConfig] = None
         self.control_source: Optional[ControlSource] = None
@@ -158,7 +159,7 @@ class MeasurementController:
         Raises:
             RuntimeError: If measurement is already running or instruments fail to connect
         """
-        if self.is_measuring:
+        if self.is_measuring or self._is_stopping:
             raise RuntimeError("Measurement already in progress")
 
         logger.info("Starting measurement...")
@@ -449,10 +450,13 @@ class MeasurementController:
         Returns:
             Dictionary with session information and file paths
         """
+        if self._is_stopping:
+            raise RuntimeError("Measurement is already stopping")
         if not self.is_measuring:
             raise RuntimeError("No measurement in progress")
 
         logger.info("Stopping measurement...")
+        self._is_stopping = True
         self._record_event(f"Stop requested by {control_source}", source=control_source)
         stop_requested_perf = time.perf_counter()
         oscilloscope_stop_elapsed = None
@@ -691,6 +695,7 @@ class MeasurementController:
         self._voltage_stage_task = None
         if self._auto_stop_task is not current_task:
             self._auto_stop_task = None
+        self._is_stopping = False
 
         return response
 
@@ -1298,11 +1303,13 @@ class MeasurementController:
             Dictionary with status information
         """
         elapsed = None
-        if self.is_measuring and self.start_time:
+        status_is_measuring = self.is_measuring or self._is_stopping
+        if status_is_measuring and self.start_time:
             elapsed = round(time.time() - self.start_time, 1)
 
         return {
-            "is_measuring": self.is_measuring,
+            "is_measuring": status_is_measuring,
+            "is_stopping": self._is_stopping,
             "camera_recording": self.camera.is_recording,
             "camera_available": self.camera.is_available,
             "camera_timing": self.camera.last_timing,
