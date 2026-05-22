@@ -320,6 +320,8 @@ def fit_exponential_tail(
     magnitude_mA = float(np.exp(intercept))
     if tau_s <= 0 or not np.isfinite(tau_s) or not np.isfinite(magnitude_mA):
         return None
+    if magnitude_mA > abs(peak_ma) * 1.5:
+        return None
 
     predicted_log = slope * fit_t + intercept
     actual_log = np.log(fit_y)
