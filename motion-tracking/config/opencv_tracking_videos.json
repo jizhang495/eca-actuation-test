@@ -1,0 +1,130 @@
+{
+  "default_params": {
+    "lk_window_fraction": 0.085,
+    "lk_window_min_px": 51,
+    "lk_window_max_px": 101,
+    "lk_max_level": 3,
+    "lk_min_eig_threshold": 0.000001,
+    "use_lk_prediction": false,
+    "template_radius_fraction": 0.035,
+    "template_radius_min_px": 20,
+    "template_radius_max_px": 38,
+    "template_search_fraction": 0.045,
+    "template_search_min_px": 28,
+    "template_search_max_px": 54,
+    "template_every_n": 1,
+    "template_min_score": 0.25,
+    "max_template_correction_px": 8.0,
+    "smoothing_window_s": 0.5,
+    "relay_event_first_s": 50.0,
+    "relay_event_period_s": 50.0,
+    "relay_event_window_s": 5.0
+  },
+  "videos": [
+    {
+      "id": "6998",
+      "video_path": "user-data/sessions/2026-05-06_13-20-47_step_voltage_relay2_750s/MVI_6998.mp4",
+      "manual_csv": "motion-tracking/user-data/data/6998.csv",
+      "manual_displacement_scale": -1.0,
+      "tip_seed_px": [597.202568, 566.964397],
+      "reference_seed_px": [822.728424, 274.662774],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "notes": "The old manual CSV is clamp - tip, so comparison multiplies it by -1. OpenCV output is tip - fixed reference."
+    },
+    {
+      "id": "6999",
+      "video_path": "user-data/sessions/2026-05-06_16-34-21_step_voltage_relay2_750s/MVI_6999.mp4",
+      "manual_csv": "motion-tracking/user-data/data/6999.csv",
+      "manual_displacement_scale": -1.0,
+      "tip_seed_px": [600.982361, 570.744209],
+      "reference_seed_px": [825.248260, 272.142935],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "notes": "The old manual CSV is clamp - tip, so comparison multiplies it by -1. OpenCV output is tip - fixed reference."
+    },
+    {
+      "id": "7000",
+      "video_path": "user-data/sessions/2026-05-06_17-19-01_step_voltage_relay2_750s/MVI_7000.mp4",
+      "manual_csv": "motion-tracking/user-data/data/7000.csv",
+      "manual_displacement_scale": -1.0,
+      "tip_seed_px": [658.938751, 527.906842],
+      "reference_seed_px": [898.323746, 240.644917],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "notes": "The old manual CSV is clamp - tip, so comparison multiplies it by -1. OpenCV output is tip - fixed reference."
+    },
+    {
+      "id": "7003",
+      "video_path": "user-data/sessions/2026-05-18_15-50-23_step_voltage_relay2_750s_oscilloscope/MVI_7003.mp4",
+      "manual_csv": "motion-tracking/user-data/data/7003.csv",
+      "tip_seed_px": [1412.786636, 306.368372],
+      "reference_seed_px": [936.751099, 651.064117],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "params": {
+        "method": "dark_endpoint",
+        "endpoint_score_mode": "distance",
+        "endpoint_roi_radius_min_px": 180,
+        "endpoint_roi_radius_max_px": 180,
+        "template_radius_fraction": 0.085,
+        "template_radius_max_px": 100,
+        "template_search_fraction": 0.035,
+        "template_search_max_px": 50,
+        "smoothing_window_s": 0.0
+      }
+    },
+    {
+      "id": "7004",
+      "video_path": "user-data/sessions/2026-05-18_17-58-23_step_voltage_relay2_750s_oscilloscope/MVI_7004.mp4",
+      "manual_csv": "motion-tracking/user-data/data/7004.csv",
+      "tip_seed_px": [1350.999870, 244.999967],
+      "reference_seed_px": [937.360096, 656.390276],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "params": {
+        "method": "dark_endpoint",
+        "template_radius_fraction": 0.11,
+        "template_radius_max_px": 130,
+        "template_search_fraction": 0.03,
+        "template_search_max_px": 45,
+        "smoothing_window_s": 0.0
+      }
+    },
+    {
+      "id": "7005",
+      "video_path": "user-data/sessions/2026-05-18_20-33-13_step_voltage_relay2_750s_moku/MVI_7005.mp4",
+      "manual_csv": "motion-tracking/user-data/data/7005.csv",
+      "tip_seed_px": [1091.499825, 282.999938],
+      "reference_seed_px": [657.048683, 672.167716],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "params": {
+        "method": "dark_endpoint",
+        "template_radius_fraction": 0.11,
+        "template_radius_max_px": 130,
+        "template_search_fraction": 0.03,
+        "template_search_max_px": 45,
+        "smoothing_window_s": 0.0
+      }
+    },
+    {
+      "id": "7006",
+      "video_path": "user-data/sessions/2026-05-22_12-45-22_step_voltage_relay2_750s_moku/MVI_7006.mp4",
+      "manual_csv": "motion-tracking/user-data/data/7006.csv",
+      "tip_seed_px": [1342.999878, 364.499910],
+      "reference_seed_px": [842.116070, 696.868930],
+      "tip_track": "Track",
+      "reference_track": "Track.001",
+      "notes": "The reference marker starts at frame 1 in Blender; this config stores its fixed initial coordinate.",
+      "params": {
+        "method": "dark_endpoint",
+        "template_radius_fraction": 0.11,
+        "template_radius_max_px": 130,
+        "template_search_fraction": 0.03,
+        "template_search_max_px": 45,
+        "smoothing_window_s": 0.0
+      }
+    }
+  ]
+}
