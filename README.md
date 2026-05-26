@@ -78,6 +78,7 @@ Not every run creates every file. DMM-only runs do not create oscilloscope wavef
 - [Setup](docs/SETUP.md): dependencies, drivers, ports, and hardware setup
 - [Operation](docs/OPERATION.md): sync model, `t0`, agent/browser control, automation, and outputs
 - [Camera](docs/CAMERA.md): Canon bridge, camera service, and video download/compression
+- [Charge Transfer Analysis](docs/CHARGE_TRANSFER_ANALYSIS.md): current fitting, dual-exponential edge modeling, and whole-run charge plots
 - [Development](docs/DEVELOPMENT.md): frontend notes, mock instruments, validation commands
 - [Requirements](docs/REQUIREMENTS.md): current product requirements
 - [Known Issues](docs/KNOWN_ISSUES.md): audit findings and fix candidates
@@ -102,6 +103,10 @@ npm run dev
 uv run python3 scripts/plot_oscilloscope_waveform.py \
   user-data/sessions/<session>/oscilloscope_waveform.csv \
   --analysis-output user-data/sessions/<session>/oscilloscope_waveform_analysis.svg
+
+# Fit relay-edge current and plot whole-run charge transfer
+uv run python3 scripts/analyze_charge_transfer.py \
+  user-data/sessions/<session>
 ```
 
 ## Safety
