@@ -10,11 +10,17 @@ import math
 import re
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+try:
+    from moku.instruments import Datalogger as MokuApiDatalogger
+except ImportError:  # pragma: no cover - exercised only on incomplete installs.
+    MokuApiDatalogger = None
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,13 @@ class MokuProDatalogger:
     _CH2_PROBE_ATTENUATION = 1.0
     _CH1_FRONTEND_RANGE = "400mVpp"
     _CH2_FRONTEND_RANGE = "400mVpp"
+    _WAVEFORM_TYPES = {
+        "off": "Off",
+        "sine": "Sine",
+        "square": "Square",
+        "ramp": "Ramp",
+        "pulse": "Pulse",
+    }
 
     def __init__(self, moku_address: Optional[str] = None):
         self.moku_address = moku_address
@@ -43,6 +56,8 @@ class MokuProDatalogger:
         self._log_file_name: Optional[str] = None
         self._last_sample_rate_hz: Optional[float] = None
         self._last_duration_seconds: Optional[float] = None
+        self._instrument = None
+        self._api_lock = threading.RLock()
         self.last_error: Optional[str] = None
         self.last_logging_start_request_monotonic: Optional[float] = None
         self.last_logging_start_ack_monotonic: Optional[float] = None
@@ -139,15 +154,27 @@ class MokuProDatalogger:
             self.last_error = "No Moku address specified"
             return False
 
+        if MokuApiDatalogger is None:
+            self.last_error = (
+                "The moku Python package is not installed. Install it with `uv add moku`."
+            )
+            return False
+
         try:
             self.last_error = None
-            serial = self._command("Moku", "serial_number")
+            self._instrument = MokuApiDatalogger(
+                self.moku_address,
+                force_connect=True,
+                persist_state=True,
+            )
+            serial = self._api_call(self._instrument.serial_number)
             self._idn = f"Moku:Pro {self.moku_address} serial {serial}"
             self._is_connected = True
             logger.info("Connected to Moku:Pro: %s", self._idn)
             return True
         except Exception as exc:
             self.last_error = str(exc)
+            self._instrument = None
             self._is_connected = False
             logger.error("Failed to connect to Moku:Pro at %s: %s", self.moku_address, exc)
             return False
@@ -156,43 +183,30 @@ class MokuProDatalogger:
         """Configure Data Logger inputs 1 and 2 for DC voltage logging."""
         if not self._is_connected:
             raise RuntimeError("Moku:Pro not connected")
-
-        for command in (
-            ("Datalogger", "enable_input", {"channel": 1, "enable": True}),
-            ("Datalogger", "enable_input", {"channel": 2, "enable": True}),
-            ("Datalogger", "enable_input", {"channel": 3, "enable": False}),
-            ("Datalogger", "enable_input", {"channel": 4, "enable": False}),
-            (
-                "Datalogger",
-                "set_frontend",
-                {
-                    "channel": 1,
-                    "impedance": "1MOhm",
-                    "coupling": "DC",
-                    "range": self._CH1_FRONTEND_RANGE,
-                    "strict": False,
-                },
-            ),
-            (
-                "Datalogger",
-                "set_frontend",
-                {
-                    "channel": 2,
-                    "impedance": "1MOhm",
-                    "coupling": "DC",
-                    "range": self._CH2_FRONTEND_RANGE,
-                    "strict": False,
-                },
-            ),
-            ("Datalogger", "set_acquisition_mode", {"mode": "Normal", "strict": False}),
-            (
-                "Datalogger",
-                "set_samplerate",
-                {"sample_rate": float(sample_rate_hz), "strict": False},
-            ),
-        ):
-            object_name, function_name, kwargs = command
-            self._command(object_name, function_name, **kwargs)
+        instrument = self._require_instrument()
+        self._api_call(instrument.enable_input, channel=1, enable=True, strict=False)
+        self._api_call(instrument.enable_input, channel=2, enable=True, strict=False)
+        self._api_call(instrument.enable_input, channel=3, enable=False, strict=False)
+        self._api_call(instrument.enable_input, channel=4, enable=False, strict=False)
+        self._api_call(
+            instrument.set_frontend,
+            channel=1,
+            impedance="1MOhm",
+            coupling="DC",
+            range=self._CH1_FRONTEND_RANGE,
+            strict=False,
+        )
+        self._api_call(
+            instrument.set_frontend,
+            channel=2,
+            impedance="1MOhm",
+            coupling="DC",
+            range=self._CH2_FRONTEND_RANGE,
+            strict=False,
+        )
+        self._api_call(instrument.set_acquisition_mode, mode="Normal", strict=False)
+        self._api_call(instrument.set_samplerate, sample_rate=float(sample_rate_hz), strict=False)
+        self._api_call(instrument.set_output_termination, channel=1, termination="HiZ", strict=False)
 
         self._last_sample_rate_hz = sample_rate_hz
 
@@ -214,9 +228,9 @@ class MokuProDatalogger:
             raise ValueError("Moku:Pro API logging sample rate must be at most 1 MSa/s")
 
         self.last_logging_start_request_monotonic = time.perf_counter()
-        response = self._command(
-            "Datalogger",
-            "start_logging",
+        instrument = self._require_instrument()
+        response = self._api_call(
+            instrument.start_logging,
             duration=int(math.ceil(duration_seconds)),
             sample_rate=float(sample_rate_hz),
             file_name_prefix=self._safe_file_prefix(file_name_prefix),
@@ -240,9 +254,9 @@ class MokuProDatalogger:
         if not self._is_connected:
             return None
         try:
-            response = self._command("Datalogger", "stop_logging")
+            response = self._api_call(self._require_instrument().stop_logging)
             return response if isinstance(response, dict) else {"response": response}
-        except MokuCliError as exc:
+        except Exception as exc:
             message = str(exc)
             message_lower = message.lower()
             if (
@@ -257,8 +271,66 @@ class MokuProDatalogger:
     def logging_progress(self) -> Optional[dict]:
         if not self._is_connected:
             return None
-        response = self._command("Datalogger", "logging_progress")
+        response = self._api_call(self._require_instrument().logging_progress)
         return response if isinstance(response, dict) else {"response": response}
+
+    def generate_waveform(
+        self,
+        waveform: str,
+        vpp: float,
+        frequency_hz: float,
+        channel: int = 1,
+    ) -> dict:
+        """Generate a waveform on a Moku Data Logger output."""
+        if not self._is_connected:
+            raise RuntimeError("Moku:Pro not connected")
+        if channel != 1:
+            raise ValueError("Only Moku Waveform Generator output 1 is supported")
+        if vpp < 0:
+            raise ValueError("Waveform Generator Vpp must be non-negative")
+        if frequency_hz <= 0:
+            raise ValueError("Waveform Generator frequency must be greater than 0 Hz")
+
+        waveform_type = self._normalize_waveform_type(waveform)
+        response = self._api_call(
+            self._require_instrument().generate_waveform,
+            channel=channel,
+            type=waveform_type,
+            frequency=float(frequency_hz),
+            amplitude=float(vpp),
+            offset=0.0,
+            strict=False,
+        )
+        return response if isinstance(response, dict) else {"response": response}
+
+    def stop_waveform_generator(self, channel: int = 1) -> dict:
+        """Drive the Moku waveform-generator output to 0 V."""
+        if not self._is_connected:
+            raise RuntimeError("Moku:Pro not connected")
+        if channel != 1:
+            raise ValueError("Only Moku Waveform Generator output 1 is supported")
+
+        response = self._api_call(
+            self._require_instrument().generate_waveform,
+            channel=channel,
+            type="Off",
+            strict=False,
+        )
+        return response if isinstance(response, dict) else {"response": response}
+
+    def generate_signal(
+        self,
+        waveform: str,
+        vpp: float,
+        frequency_hz: float,
+        channel: int = 1,
+    ) -> dict:
+        """Compatibility wrapper for older code naming."""
+        return self.generate_waveform(waveform, vpp, frequency_hz, channel=channel)
+
+    def stop_signal_generator(self, channel: int = 1) -> dict:
+        """Compatibility wrapper for older code naming."""
+        return self.stop_waveform_generator(channel=channel)
 
     def capture_waveforms(
         self,
@@ -337,6 +409,13 @@ class MokuProDatalogger:
         }
 
     def disconnect(self):
+        instrument = self._instrument
+        if instrument is not None:
+            try:
+                self._api_call(instrument.relinquish_ownership)
+            except Exception as exc:
+                logger.warning("Failed to relinquish Moku:Pro ownership: %s", exc)
+        self._instrument = None
         self._is_connected = False
 
     @property
@@ -360,11 +439,27 @@ class MokuProDatalogger:
         output = self._run_cli(args, timeout=30)
         return self._parse_command_output(output)
 
+    def _require_instrument(self):
+        if self._instrument is None:
+            raise RuntimeError("Moku:Pro API instrument is not connected")
+        return self._instrument
+
+    def _api_call(self, func, *args, **kwargs):
+        with self._api_lock:
+            return func(*args, **kwargs)
+
     @staticmethod
     def _format_value(value: object) -> str:
         if isinstance(value, bool):
             return "True" if value else "False"
         return str(value)
+
+    @classmethod
+    def _normalize_waveform_type(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in cls._WAVEFORM_TYPES:
+            raise ValueError(f"Unsupported Moku waveform type: {value}")
+        return cls._WAVEFORM_TYPES[normalized]
 
     @staticmethod
     def _parse_command_output(output: str):

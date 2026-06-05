@@ -15,7 +15,7 @@ The backend is the shared control plane. See [docs/OPERATION.md](docs/OPERATION.
 | --- | --- | --- |
 | DMM x2 | Keithley 2110 | Slow voltage checks and DMM-mode logging |
 | Oscilloscope | Tektronix TBS 2000B series | Full-record CH1/CH2 capture for relay-edge transients |
-| Moku:Pro | Liquid Instruments Moku:Pro | Full-run CH1/CH2 high-rate voltage logging |
+| Moku:Pro | Liquid Instruments Moku:Pro | Full-run CH1/CH2 high-rate voltage logging and optional Waveform Generator stages |
 | Power supply | IT6412 | Programmed voltage stages |
 | Relay board | Devantech USB-RLY08C | Programmed relay switching |
 | Camera | Canon 2000D DSLR | Synchronized video recording |

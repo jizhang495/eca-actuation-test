@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import math
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -24,7 +26,13 @@ from instruments.mock import (
 )
 from camera_controller import CameraController
 from data_logger import DataLogger
-from api_models import ControlSource, MeasurementConfig, VoltageStage, RelayStage
+from api_models import (
+    ControlSource,
+    MeasurementConfig,
+    MokuWaveformGeneratorStage,
+    RelayStage,
+    VoltageStage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +137,8 @@ class MeasurementController:
         
         self._measurement_task: Optional[asyncio.Task] = None
         self._voltage_stage_task: Optional[asyncio.Task] = None
+        self._moku_waveform_generator_task: Optional[asyncio.Task] = None
+        self._moku_waveform_generator_stop_event: Optional[threading.Event] = None
         self._auto_stop_task: Optional[asyncio.Task] = None
         self._camera_start_task: Optional[asyncio.Task] = None
         self._camera_start_log_task: Optional[asyncio.Task] = None
@@ -308,6 +318,23 @@ class MeasurementController:
                 self._execute_voltage_stages(config.voltage_stages)
             )
 
+        if config.moku_waveform_generator_stages and self.moku.is_connected:
+            self._record_event(
+                "Moku waveform generator schedule armed: "
+                f"{len(config.moku_waveform_generator_stages)} stage(s) on Output 1"
+            )
+            self._moku_waveform_generator_stop_event = threading.Event()
+            if self._start_monotonic is None:
+                raise RuntimeError("Measurement clock is not running")
+            self._moku_waveform_generator_task = asyncio.create_task(
+                asyncio.to_thread(
+                    self._run_moku_waveform_generator_schedule,
+                    config.moku_waveform_generator_stages,
+                    self._start_monotonic,
+                    self._moku_waveform_generator_stop_event,
+                )
+            )
+
         # Start relay stage tasks
         if config.relay_ch1_stages:
             task = asyncio.create_task(
@@ -459,6 +486,8 @@ class MeasurementController:
         self._is_stopping = True
         self._record_event(f"Stop requested by {control_source}", source=control_source)
         stop_requested_perf = time.perf_counter()
+        if self._moku_waveform_generator_stop_event:
+            self._moku_waveform_generator_stop_event.set()
         oscilloscope_stop_elapsed = None
         oscilloscope_stop_task = None
         moku_stop_task = None
@@ -614,6 +643,19 @@ class MeasurementController:
             except asyncio.CancelledError:
                 pass
 
+        if self._moku_waveform_generator_task:
+            try:
+                await asyncio.wait_for(self._moku_waveform_generator_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Moku waveform generator scheduler did not stop cleanly")
+                self._moku_waveform_generator_task.cancel()
+                try:
+                    await self._moku_waveform_generator_task
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                pass
+
         if self._auto_stop_task and self._auto_stop_task is not current_task:
             self._auto_stop_task.cancel()
             try:
@@ -701,6 +743,8 @@ class MeasurementController:
         self.control_source = None
         self._measurement_task = None
         self._voltage_stage_task = None
+        self._moku_waveform_generator_task = None
+        self._moku_waveform_generator_stop_event = None
         if self._auto_stop_task is not current_task:
             self._auto_stop_task = None
         self._is_stopping = False
@@ -920,6 +964,9 @@ class MeasurementController:
         if config.measurement_source == "moku" and config.moku_sample_rate_hz < 10:
             raise RuntimeError("Moku:Pro sample rate must be at least 10 Hz")
 
+        if config.moku_waveform_generator_stages and config.measurement_source != "moku":
+            raise RuntimeError("Moku waveform generator stages require Moku:Pro mode")
+
         if (
             config.measurement_source == "dmm"
             and config.dmm_acquisition_mode == "low_noise"
@@ -933,6 +980,12 @@ class MeasurementController:
         for index, stage in enumerate(config.voltage_stages, start=1):
             if stage.end_time <= stage.start_time:
                 raise RuntimeError(f"Power stage {index} end time must be after start time")
+
+        for index, stage in enumerate(config.moku_waveform_generator_stages, start=1):
+            if stage.end_time <= stage.start_time:
+                raise RuntimeError(
+                    f"Moku waveform generator stage {index} end time must be after start time"
+                )
 
         for channel, stages in ((1, config.relay_ch1_stages), (2, config.relay_ch2_stages)):
             for index, stage in enumerate(stages, start=1):
@@ -1052,6 +1105,7 @@ class MeasurementController:
         candidates.extend(stage.end_time for stage in config.voltage_stages)
         candidates.extend(stage.end_time for stage in config.relay_ch1_stages)
         candidates.extend(stage.end_time for stage in config.relay_ch2_stages)
+        candidates.extend(stage.end_time for stage in config.moku_waveform_generator_stages)
 
         duration = max(candidates, default=0.0)
         ready_delay = max(0.0, config.camera_ready_delay_seconds)
@@ -1234,6 +1288,116 @@ class MeasurementController:
             await asyncio.to_thread(self.power_supply.set_voltage, 0.0)
             await asyncio.to_thread(self.power_supply.set_output_off)
             logger.info("Voltage stages completed")
+
+    def _run_moku_waveform_generator_schedule(
+        self,
+        stages: list[MokuWaveformGeneratorStage],
+        start_monotonic: float,
+        stop_event: threading.Event,
+    ):
+        """Execute Moku:Pro waveform-generator stages in a dedicated worker thread."""
+        if not self.moku.is_connected:
+            logger.warning("Moku:Pro not connected, skipping waveform generator stages")
+            self._record_event(
+                "Moku waveform generator stages skipped because Moku:Pro is not connected",
+                kind="warning",
+            )
+            return
+
+        logger.info("Executing %s Moku waveform generator stages", len(stages))
+        self._record_event(
+            "Moku waveform generator task started; waiting for first stage"
+        )
+
+        try:
+            for i, stage in enumerate(stages):
+                stage_number = i + 1
+                current_elapsed = max(0.0, time.perf_counter() - start_monotonic)
+                self._record_event(
+                    "Moku waveform generator stage "
+                    f"{stage_number} queued for {stage.start_time:g}-{stage.end_time:g} s"
+                    f"; current elapsed {current_elapsed:.3f} s"
+                )
+                if self._wait_for_moku_stage_time(
+                    stage.start_time,
+                    start_monotonic,
+                    stop_event,
+                ):
+                    return
+
+                elapsed = time.perf_counter() - start_monotonic
+
+                self.moku.generate_waveform(
+                    stage.waveform,
+                    stage.vpp,
+                    stage.frequency_hz,
+                )
+                logger.info(
+                    "Moku waveform generator stage %s: %s %.6g Vpp %.6g Hz at %.2fs",
+                    stage_number,
+                    stage.waveform,
+                    stage.vpp,
+                    stage.frequency_hz,
+                    elapsed,
+                )
+                self._record_event(
+                    "Moku waveform generator "
+                    f"{stage.waveform}, {stage.vpp:g} Vpp, {stage.frequency_hz:g} Hz "
+                    f"on Output 1 at {elapsed:.3f} s"
+                )
+
+                if self._wait_for_moku_stage_time(
+                    stage.end_time,
+                    start_monotonic,
+                    stop_event,
+                ):
+                    return
+
+                next_stage = stages[i + 1] if i + 1 < len(stages) else None
+                has_gap_before_next_stage = (
+                    next_stage is not None and next_stage.start_time > stage.end_time
+                )
+                if has_gap_before_next_stage:
+                    self.moku.stop_waveform_generator()
+                    self._record_event("Moku waveform generator set to 0 V")
+
+        except Exception as exc:
+            logger.error("Moku waveform generator stage execution failed: %s", exc)
+            self._record_event(
+                f"Moku waveform generator stage execution failed: {exc}",
+                kind="error",
+            )
+        finally:
+            try:
+                self.moku.stop_waveform_generator()
+                self._record_event("Moku waveform generator set to 0 V")
+            except Exception as exc:
+                logger.warning("Failed to stop Moku waveform generator: %s", exc)
+                self._record_event(
+                    f"Moku waveform generator shutdown failed: {exc}",
+                    kind="warning",
+                )
+            logger.info("Moku waveform generator stages completed")
+
+    def _wait_for_moku_stage_time(
+        self,
+        elapsed_seconds: float,
+        start_monotonic: float,
+        stop_event: threading.Event,
+    ) -> bool:
+        """Return True when the scheduler should stop before the target time."""
+        current_elapsed = time.perf_counter() - start_monotonic
+        remaining = elapsed_seconds - current_elapsed
+        if not math.isfinite(remaining):
+            raise RuntimeError(f"Measurement clock produced non-finite remaining time: {remaining}")
+        if remaining <= 0:
+            return stop_event.is_set()
+        logger.debug(
+            "Waiting %.3f s for Moku waveform generator elapsed %.3f s",
+            remaining,
+            elapsed_seconds,
+        )
+        return stop_event.wait(remaining)
 
     async def _execute_relay_stages(self, channel: int, stages: list[RelayStage]):
         """

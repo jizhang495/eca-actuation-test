@@ -274,6 +274,12 @@ class MockMokuProDatalogger:
         self._logging_started_at: Optional[float] = None
         self._sample_rate_hz = 1000.0
         self._duration_seconds = 0.0
+        self._waveform_generator = {
+            "channel": 1,
+            "waveform": "Sine",
+            "vpp": 0.0,
+            "frequency_hz": 1.0,
+        }
 
     @staticmethod
     def list_available_devices() -> list[str]:
@@ -319,6 +325,36 @@ class MockMokuProDatalogger:
 
     def stop_logging(self) -> dict:
         return {"stopped": True}
+
+    def generate_waveform(
+        self,
+        waveform: str,
+        vpp: float,
+        frequency_hz: float,
+        channel: int = 1,
+    ) -> dict:
+        self._waveform_generator = {
+            "channel": channel,
+            "waveform": waveform,
+            "vpp": vpp,
+            "frequency_hz": frequency_hz,
+        }
+        return {"generated": True, **self._waveform_generator}
+
+    def stop_waveform_generator(self, channel: int = 1) -> dict:
+        return self.generate_waveform("Sine", 0.0, 1.0, channel=channel)
+
+    def generate_signal(
+        self,
+        waveform: str,
+        vpp: float,
+        frequency_hz: float,
+        channel: int = 1,
+    ) -> dict:
+        return self.generate_waveform(waveform, vpp, frequency_hz, channel=channel)
+
+    def stop_signal_generator(self, channel: int = 1) -> dict:
+        return self.stop_waveform_generator(channel=channel)
 
     def capture_waveforms(
         self,

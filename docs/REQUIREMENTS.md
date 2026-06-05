@@ -17,7 +17,7 @@ The browser is a monitor and operator console. It must not be the only way to ru
 | --- | --- | --- | --- |
 | DMM | Keithley 2110 x2 | VISA / USB | Slow voltage checks and DMM-mode logging |
 | Oscilloscope | Tektronix | VISA / USB | Full-record voltage/current capture for relay-edge transients |
-| Moku:Pro | Liquid Instruments Moku:Pro | MokuCLI / network or USB | Full-run CH1/CH2 high-rate voltage logging |
+| Moku:Pro | Liquid Instruments Moku:Pro | MokuCLI / network or USB | Full-run CH1/CH2 high-rate voltage logging and optional Waveform Generator stages |
 | Power supply | IT6412 | VISA / USB | Programmed voltage stages |
 | Relay board | Devantech USB-RLY08C | USB serial | Programmed relay stages |
 | Camera | Canon 2000D DSLR | Canon EDSDK bridge + HTTP service | Synchronized video recording |
@@ -49,6 +49,7 @@ The browser is a monitor and operator console. It must not be the only way to ru
 - Oscilloscope or Moku:Pro mode is the preferred mode for sharp current peaks at relay edges.
 - Full-record Tektronix capture should start before `t0`, include the ready delay and planned run duration, stop with the measurement, and export the whole waveform to the session folder.
 - Moku:Pro Data Logger capture should start before `t0`, crop pre-`t0` samples from the app CSV, stop with the measurement, and export full-run CH1/CH2 data to the session folder. `moku_sample_rate_hz` controls the Moku file rate separately from the app timing loop.
+- Moku:Pro Waveform Generator stages, when configured, should use the same `t0` clock as voltage and relay stages. The saved config key is `moku_waveform_generator_stages`; each stage has `start_time`, `end_time`, `waveform`, `vpp`, and `frequency_hz`. These stages use the Data Logger's built-in Output 1 waveform generator; multi-instrument mode is not required unless future experiments need a separate Moku instrument or unsupported output routing.
 - The current analysis convention is `current_mA = ch2_voltage / 330 * 1000`.
 
 ### 3.4 Camera and Video
@@ -138,7 +139,7 @@ The UI should show:
 - Camera sync is logged but not yet automatically rejected when it exceeds the 20 ms target.
 - Manual camera download currently selects the newest camera movie; exact session correlation should be made stricter.
 - DMM current acquisition is not adequate for fast relay-edge charge integration.
-- Moku:Pro API control requires a working `mokucli` install and current MokuOS.
+- Moku:Pro API control requires a working `mokucli` install, the Python `moku` package from project dependencies, and current MokuOS.
 - There is no automated hardware-in-loop sync regression test.
 
 The active issue list is maintained in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).

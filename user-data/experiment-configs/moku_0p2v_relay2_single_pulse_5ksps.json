@@ -32,6 +32,7 @@
       "state": "closed"
     }
   ],
+  "moku_waveform_generator_stages": [],
   "sampling_rate_hz": 10.0,
   "moku_sample_rate_hz": 5000.0,
   "dmm_acquisition_mode": "low_noise",

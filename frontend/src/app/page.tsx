@@ -16,6 +16,11 @@ import { DMMGraph } from "@/components/DMMGraph";
 import { VoltageStageConfigurator, VoltageStage } from "@/components/VoltageStageConfigurator";
 import { RelayStageConfigurator, RelayStage } from "@/components/RelayStageConfigurator";
 import {
+  MokuWaveformGeneratorConfigurator,
+  MokuWaveformGeneratorStage,
+  MokuWaveform,
+} from "@/components/MokuWaveformGeneratorConfigurator";
+import {
   Download,
   Loader2,
   Play,
@@ -55,6 +60,7 @@ interface MeasurementConfig {
   voltage_stages: Array<{ start_time: number; end_time: number; voltage: number }>;
   relay_ch1_stages: RelayStage[];
   relay_ch2_stages: RelayStage[];
+  moku_waveform_generator_stages?: MokuWaveformGeneratorStage[];
   sampling_rate_hz: number;
   moku_sample_rate_hz?: number;
   dmm_acquisition_mode?: DmmAcquisitionMode;
@@ -195,6 +201,52 @@ const normalizeRelayStages = (value: unknown, fieldName: string): RelayStage[] =
   });
 };
 
+const normalizeMokuWaveformGeneratorStages = (
+  value: unknown
+): MokuWaveformGeneratorStage[] => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("moku_waveform_generator_stages must be an array.");
+  }
+
+  return value.map((stage, index) => {
+    if (!isRecord(stage)) {
+      throw new Error(`moku_waveform_generator_stages[${index}] must be an object.`);
+    }
+
+    if (
+      stage.waveform !== "Sine" &&
+      stage.waveform !== "Square" &&
+      stage.waveform !== "Ramp" &&
+      stage.waveform !== "Pulse"
+    ) {
+      throw new Error(
+        `moku_waveform_generator_stages[${index}].waveform must be Sine, Square, Ramp, or Pulse.`
+      );
+    }
+
+    return {
+      start_time: readNumber(
+        stage.start_time,
+        0,
+        `moku_waveform_generator_stages[${index}].start_time`
+      ),
+      end_time: readNumber(
+        stage.end_time,
+        0,
+        `moku_waveform_generator_stages[${index}].end_time`
+      ),
+      waveform: stage.waveform as MokuWaveform,
+      vpp: readNumber(stage.vpp, 0, `moku_waveform_generator_stages[${index}].vpp`),
+      frequency_hz: readNumber(
+        stage.frequency_hz,
+        1,
+        `moku_waveform_generator_stages[${index}].frequency_hz`
+      ),
+    };
+  });
+};
+
 const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
   const configValue = isRecord(value) && "config" in value ? value.config : value;
   if (!isRecord(configValue)) {
@@ -229,6 +281,9 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
     voltage_stages: normalizeVoltageStages(configValue.voltage_stages),
     relay_ch1_stages: normalizeRelayStages(configValue.relay_ch1_stages, "relay_ch1_stages"),
     relay_ch2_stages: normalizeRelayStages(configValue.relay_ch2_stages, "relay_ch2_stages"),
+    moku_waveform_generator_stages: normalizeMokuWaveformGeneratorStages(
+      configValue.moku_waveform_generator_stages ?? configValue.moku_signal_generator_stages
+    ),
     sampling_rate_hz: readNumber(configValue.sampling_rate_hz, 10, "sampling_rate_hz"),
     moku_sample_rate_hz: readNumber(
       configValue.moku_sample_rate_hz,
@@ -384,6 +439,9 @@ export default function Home() {
   const [relayPort, setRelayPort] = useState("");
   const [relayCh1Stages, setRelayCh1Stages] = useState<RelayStage[]>([]);
   const [relayCh2Stages, setRelayCh2Stages] = useState<RelayStage[]>([]);
+  const [mokuWaveformGeneratorStages, setMokuWaveformGeneratorStages] = useState<
+    MokuWaveformGeneratorStage[]
+  >([]);
 
   // State for test configuration
   const [testName, setTestName] = useState("test");
@@ -482,6 +540,7 @@ export default function Home() {
     );
     setRelayCh1Stages(config.relay_ch1_stages || []);
     setRelayCh2Stages(config.relay_ch2_stages || []);
+    setMokuWaveformGeneratorStages(config.moku_waveform_generator_stages || []);
     setSamplingRate(config.sampling_rate_hz || 10);
     setMokuSampleRate(config.moku_sample_rate_hz || 10000);
     setDmmAcquisitionMode(config.dmm_acquisition_mode || "fast");
@@ -770,6 +829,7 @@ export default function Home() {
     }
 
     const normalizedVoltageStages: MeasurementConfig["voltage_stages"] = [];
+    const normalizedMokuWaveformGeneratorStages: MokuWaveformGeneratorStage[] = [];
 
     for (let i = 0; i < voltageStages.length; i++) {
       const stage = voltageStages[i];
@@ -791,6 +851,34 @@ export default function Home() {
         end_time: stage.end_time,
         voltage: evaluation.value,
       });
+    }
+
+    if (measurementSource === "moku") {
+      for (let i = 0; i < mokuWaveformGeneratorStages.length; i++) {
+        const stage = mokuWaveformGeneratorStages[i];
+        if (stage.end_time <= stage.start_time) {
+          alert(`Moku waveform generator stage ${i + 1}: end time must be after start time.`);
+          return null;
+        }
+        if (!Number.isFinite(stage.vpp) || stage.vpp < 0) {
+          alert(`Moku waveform generator stage ${i + 1}: Vpp must be 0 or greater.`);
+          return null;
+        }
+        if (!Number.isFinite(stage.frequency_hz) || stage.frequency_hz <= 0) {
+          alert(
+            `Moku waveform generator stage ${i + 1}: frequency must be greater than 0 Hz.`
+          );
+          return null;
+        }
+
+        normalizedMokuWaveformGeneratorStages.push({
+          start_time: stage.start_time,
+          end_time: stage.end_time,
+          waveform: stage.waveform,
+          vpp: stage.vpp,
+          frequency_hz: stage.frequency_hz,
+        });
+      }
     }
 
     for (const [channel, stages] of [
@@ -826,6 +914,8 @@ export default function Home() {
       voltage_stages: normalizedVoltageStages,
       relay_ch1_stages: relayCh1Stages,
       relay_ch2_stages: relayCh2Stages,
+      moku_waveform_generator_stages:
+        measurementSource === "moku" ? normalizedMokuWaveformGeneratorStages : [],
       sampling_rate_hz: measurementSource === "moku" ? 10 : samplingRate,
       moku_sample_rate_hz: mokuSampleRate,
       dmm_acquisition_mode: dmmAcquisitionMode,
@@ -843,6 +933,7 @@ export default function Home() {
     measurementSource,
     mokuAddress,
     mokuSampleRate,
+    mokuWaveformGeneratorStages,
     oscilloscopeVisa,
     powerSupplyVisa,
     recordCamera,
@@ -1356,6 +1447,14 @@ export default function Home() {
                 )}
               </CardContent>
             </Card>
+
+            {measurementSource === "moku" && (
+              <MokuWaveformGeneratorConfigurator
+                stages={mokuWaveformGeneratorStages}
+                onStagesChange={setMokuWaveformGeneratorStages}
+                disabled={isMeasuring || isStarting}
+              />
+            )}
 
             <VoltageStageConfigurator
               stages={voltageStages}

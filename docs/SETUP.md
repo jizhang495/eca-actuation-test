@@ -16,7 +16,7 @@ Detailed setup instructions for the ECA Testing Webapp.
 - VISA drivers (NI-VISA recommended)
 - USB drivers for instruments
 - ffmpeg for MOV to MP4 conversion when camera download/compression is used
-- MokuCLI for Moku:Pro logging. Follow Liquid Instruments' install guide:
+- MokuCLI and the Python `moku` package for Moku:Pro logging and output control. Follow Liquid Instruments' CLI install guide:
   `https://apis.liquidinstruments.com/cli/getting-started/install.html`
 
 ## Step-by-Step Setup
@@ -120,19 +120,21 @@ COM4
 1. Connect Moku:Pro to the computer or network.
 2. Install `mokucli` using Liquid Instruments' guide:
    `https://apis.liquidinstruments.com/cli/getting-started/install.html`
-3. Verify discovery:
+3. Run `uv sync` from the repo root. This installs the official Python `moku` package used for persistent Data Logger control.
+4. Verify discovery:
    ```bash
    mokucli list
    ```
-4. Update MokuOS if API commands report that the device is too old.
-5. Download the local Moku:Pro instrument bitstreams once:
+5. Update MokuOS if API commands report that the device is too old.
+6. Download the local Moku:Pro instrument bitstreams once:
    ```bash
    mokucli instrument download 4.2.2 --hw-version mokupro
    ```
-6. Connect Input 1 to the applied voltage signal using the 10x probe. The app treats Moku Input 1 as 10x and writes normalized circuit voltage to `moku_waveform.csv`.
-7. Connect Input 2 to the current shunt voltage using 1x. The app converts current as `ch2_voltage / 330`.
-8. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource.
-9. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
+7. Connect Input 1 to the applied voltage signal using the 10x probe. The app treats Moku Input 1 as 10x and writes normalized circuit voltage to `moku_waveform.csv`.
+8. Connect Input 2 to the current shunt voltage using 1x. The app converts current as `ch2_voltage / 330`.
+9. If using the Moku output as the voltage source, wire Output 1 to the actuator drive node and the output reference/shield to circuit reference. This uses the Data Logger's built-in Waveform Generator, not multi-instrument mode.
+10. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource.
+11. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
 
 #### Relay Board (USB-RLY08C)
 1. Connect via USB

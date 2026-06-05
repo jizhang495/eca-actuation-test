@@ -1,11 +1,12 @@
 """Pydantic models for API requests and responses."""
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 DMMAcquisitionMode = Literal["fast", "low_noise"]
 MeasurementSource = Literal["dmm", "oscilloscope", "moku"]
 ControlSource = Literal["ui", "api", "agent", "script"]
+MokuWaveform = Literal["Sine", "Square", "Ramp", "Pulse"]
 
 
 class VoltageStage(BaseModel):
@@ -20,6 +21,15 @@ class RelayStage(BaseModel):
     start_time: float = Field(..., description="Start time in seconds", ge=0)
     end_time: float = Field(..., description="End time in seconds", ge=0)
     state: Literal["open", "closed"] = Field(..., description="Relay state")
+
+
+class MokuWaveformGeneratorStage(BaseModel):
+    """Moku:Pro Waveform Generator stage configuration."""
+    start_time: float = Field(..., description="Start time in seconds", ge=0)
+    end_time: float = Field(..., description="End time in seconds", ge=0)
+    waveform: MokuWaveform = Field(..., description="Waveform type")
+    vpp: float = Field(..., description="Output amplitude in Vpp", ge=0)
+    frequency_hz: float = Field(..., description="Output frequency in Hz", gt=0)
 
 
 class MeasurementConfig(BaseModel):
@@ -38,6 +48,11 @@ class MeasurementConfig(BaseModel):
     voltage_stages: list[VoltageStage] = Field(default_factory=list, max_length=10)
     relay_ch1_stages: list[RelayStage] = Field(default_factory=list, max_length=10)
     relay_ch2_stages: list[RelayStage] = Field(default_factory=list, max_length=10)
+    moku_waveform_generator_stages: list[MokuWaveformGeneratorStage] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Moku:Pro Waveform Generator stages for output 1",
+    )
     sampling_rate_hz: float = Field(default=10.0, description="DMM sampling rate in Hz", gt=0)
     moku_sample_rate_hz: float = Field(
         default=10000.0,
@@ -65,6 +80,19 @@ class MeasurementConfig(BaseModel):
         ge=0,
         le=30,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_legacy_moku_signal_generator_key(cls, data):
+        """Accept the earlier draft key while saving the Moku API-style key."""
+        if (
+            isinstance(data, dict)
+            and "moku_waveform_generator_stages" not in data
+            and "moku_signal_generator_stages" in data
+        ):
+            data = dict(data)
+            data["moku_waveform_generator_stages"] = data["moku_signal_generator_stages"]
+        return data
 
 
 class StartMeasurementRequest(BaseModel):
