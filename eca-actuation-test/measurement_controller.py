@@ -1011,7 +1011,10 @@ class MeasurementController:
                 self.oscilloscope.configure_voltage_channels()
                 logger.info("Mock Oscilloscope connected")
             elif config.measurement_source == "moku":
-                self.moku.connect(config.moku_address or "MOKU::MOCK::PRO")
+                self.moku.connect(
+                    config.moku_address or "MOKU::MOCK::PRO",
+                    use_multi_instrument=bool(config.moku_waveform_generator_stages),
+                )
                 self.moku.configure_voltage_channels(config.moku_sample_rate_hz)
                 logger.info("Mock Moku:Pro connected")
             else:
@@ -1056,7 +1059,10 @@ class MeasurementController:
                         f"sample rate {settings.get('actual_sample_rate_hz')} Sa/s"
                     )
             elif config.measurement_source == "moku":
-                success = self.moku.connect(config.moku_address)
+                success = self.moku.connect(
+                    config.moku_address,
+                    use_multi_instrument=bool(config.moku_waveform_generator_stages),
+                )
                 if not success:
                     error_detail = (
                         f": {self.moku.last_error}"

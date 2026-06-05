@@ -132,7 +132,7 @@ COM4
    ```
 7. Connect Input 1 to the applied voltage signal using the 10x probe. The app treats Moku Input 1 as 10x and writes normalized circuit voltage to `moku_waveform.csv`.
 8. Connect Input 2 to the current shunt voltage using 1x. The app converts current as `ch2_voltage / 330`.
-9. If using the Moku output as the voltage source, wire Output 1 to the actuator drive node and the output reference/shield to circuit reference. This uses the Data Logger's built-in Waveform Generator, not multi-instrument mode.
+9. If using the Moku output as the voltage source, wire Output 1 to the actuator drive node and the output reference/shield to circuit reference. When `moku_waveform_generator_stages` are configured, the app uses Moku Multi-Instrument Mode so the Waveform Generator can change Output 1 while the Data Logger records CH1/CH2.
 10. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource.
 11. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
 

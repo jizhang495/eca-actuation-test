@@ -296,10 +296,15 @@ class MockMokuProDatalogger:
             }
         ]
 
-    def connect(self, moku_address: Optional[str] = None) -> bool:
+    def connect(
+        self,
+        moku_address: Optional[str] = None,
+        use_multi_instrument: bool = False,
+    ) -> bool:
         if moku_address:
             self.moku_address = moku_address
-        logger.info("Mock Moku:Pro connected: %s", self.moku_address)
+        mode = "MIM" if use_multi_instrument else "Data Logger"
+        logger.info("Mock Moku:Pro connected: %s (%s)", self.moku_address, mode)
         self._is_connected = True
         return True
 

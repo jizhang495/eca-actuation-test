@@ -19,8 +19,12 @@ import pandas as pd
 
 try:
     from moku.instruments import Datalogger as MokuApiDatalogger
+    from moku.instruments import MultiInstrument as MokuApiMultiInstrument
+    from moku.instruments import WaveformGenerator as MokuApiWaveformGenerator
 except ImportError:  # pragma: no cover - exercised only on incomplete installs.
     MokuApiDatalogger = None
+    MokuApiMultiInstrument = None
+    MokuApiWaveformGenerator = None
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,10 @@ class MokuProDatalogger:
     _CH2_PROBE_ATTENUATION = 1.0
     _CH1_FRONTEND_RANGE = "400mVpp"
     _CH2_FRONTEND_RANGE = "400mVpp"
+    _SETTING_COMMAND_READ_TIMEOUT_SECONDS = 2.0
+    _WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS = 0.5
+    _MIM_PLATFORM_ID = 4
+    _MIM_OUTPUT_GAIN = "14dB"
     _WAVEFORM_TYPES = {
         "off": "Off",
         "sine": "Sine",
@@ -57,6 +65,9 @@ class MokuProDatalogger:
         self._last_sample_rate_hz: Optional[float] = None
         self._last_duration_seconds: Optional[float] = None
         self._instrument = None
+        self._mim = None
+        self._waveform_generator = None
+        self._use_multi_instrument = False
         self._api_lock = threading.RLock()
         self.last_error: Optional[str] = None
         self.last_logging_start_request_monotonic: Optional[float] = None
@@ -144,7 +155,11 @@ class MokuProDatalogger:
             return address[len(cls.RESOURCE_PREFIX) :]
         return address
 
-    def connect(self, moku_address: Optional[str] = None) -> bool:
+    def connect(
+        self,
+        moku_address: Optional[str] = None,
+        use_multi_instrument: bool = False,
+    ) -> bool:
         if moku_address:
             self.moku_address = self.normalize_address(moku_address)
         else:
@@ -154,7 +169,10 @@ class MokuProDatalogger:
             self.last_error = "No Moku address specified"
             return False
 
-        if MokuApiDatalogger is None:
+        if MokuApiDatalogger is None or (
+            use_multi_instrument
+            and (MokuApiMultiInstrument is None or MokuApiWaveformGenerator is None)
+        ):
             self.last_error = (
                 "The moku Python package is not installed. Install it with `uv add moku`."
             )
@@ -162,19 +180,38 @@ class MokuProDatalogger:
 
         try:
             self.last_error = None
-            self._instrument = MokuApiDatalogger(
-                self.moku_address,
-                force_connect=True,
-                persist_state=True,
-            )
-            serial = self._api_call(self._instrument.serial_number)
-            self._idn = f"Moku:Pro {self.moku_address} serial {serial}"
+            self._use_multi_instrument = use_multi_instrument
+            if use_multi_instrument:
+                self._mim = MokuApiMultiInstrument(
+                    self.moku_address,
+                    force_connect=True,
+                    persist_state=True,
+                    platform_id=self._MIM_PLATFORM_ID,
+                )
+                self._instrument = self._mim.set_instrument(1, MokuApiDatalogger)
+                self._waveform_generator = self._mim.set_instrument(
+                    2,
+                    MokuApiWaveformGenerator,
+                )
+            else:
+                self._instrument = MokuApiDatalogger(
+                    self.moku_address,
+                    force_connect=True,
+                    persist_state=True,
+                )
+            serial_source = self._mim if use_multi_instrument else self._instrument
+            serial = self._api_call(serial_source.serial_number)
+            mode = "Moku:Pro MIM" if use_multi_instrument else "Moku:Pro"
+            self._idn = f"{mode} {self.moku_address} serial {serial}"
             self._is_connected = True
-            logger.info("Connected to Moku:Pro: %s", self._idn)
+            logger.info("Connected to %s: %s", mode, self._idn)
             return True
         except Exception as exc:
             self.last_error = str(exc)
             self._instrument = None
+            self._mim = None
+            self._waveform_generator = None
+            self._use_multi_instrument = False
             self._is_connected = False
             logger.error("Failed to connect to Moku:Pro at %s: %s", self.moku_address, exc)
             return False
@@ -184,31 +221,58 @@ class MokuProDatalogger:
         if not self._is_connected:
             raise RuntimeError("Moku:Pro not connected")
         instrument = self._require_instrument()
-        self._api_call(instrument.enable_input, channel=1, enable=True, strict=False)
-        self._api_call(instrument.enable_input, channel=2, enable=True, strict=False)
-        self._api_call(instrument.enable_input, channel=3, enable=False, strict=False)
-        self._api_call(instrument.enable_input, channel=4, enable=False, strict=False)
-        self._api_call(
-            instrument.set_frontend,
-            channel=1,
-            impedance="1MOhm",
-            coupling="DC",
-            range=self._CH1_FRONTEND_RANGE,
+        if self._use_multi_instrument:
+            self._configure_multi_instrument_routing()
+        self._api_setting_call(instrument.enable_input, channel=1, enable=True, strict=False)
+        self._api_setting_call(instrument.enable_input, channel=2, enable=True, strict=False)
+        self._api_setting_call(instrument.enable_input, channel=3, enable=False, strict=False)
+        self._api_setting_call(instrument.enable_input, channel=4, enable=False, strict=False)
+        if not self._use_multi_instrument:
+            self._api_setting_call(
+                instrument.set_frontend,
+                channel=1,
+                impedance="1MOhm",
+                coupling="DC",
+                range=self._CH1_FRONTEND_RANGE,
+                strict=False,
+            )
+            self._api_setting_call(
+                instrument.set_frontend,
+                channel=2,
+                impedance="1MOhm",
+                coupling="DC",
+                range=self._CH2_FRONTEND_RANGE,
+                strict=False,
+            )
+        self._api_setting_call(instrument.set_acquisition_mode, mode="Normal", strict=False)
+        self._api_setting_call(
+            instrument.set_samplerate,
+            sample_rate=float(sample_rate_hz),
             strict=False,
         )
-        self._api_call(
-            instrument.set_frontend,
-            channel=2,
-            impedance="1MOhm",
-            coupling="DC",
-            range=self._CH2_FRONTEND_RANGE,
-            strict=False,
+        self._verify_voltage_channel_summary(
+            self._api_call(instrument.summary),
+            expected_sample_rate_hz=float(sample_rate_hz),
         )
-        self._api_call(instrument.set_acquisition_mode, mode="Normal", strict=False)
-        self._api_call(instrument.set_samplerate, sample_rate=float(sample_rate_hz), strict=False)
-        self._api_call(instrument.set_output_termination, channel=1, termination="HiZ", strict=False)
 
         self._last_sample_rate_hz = sample_rate_hz
+
+    def _configure_multi_instrument_routing(self):
+        mim = self._require_mim()
+        self._api_setting_call(
+            mim.set_connections,
+            connections=[
+                {"source": "Input1", "destination": "Slot1InA"},
+                {"source": "Input2", "destination": "Slot1InB"},
+                {"source": "Slot2OutA", "destination": "Output1"},
+            ],
+        )
+        self._api_setting_call(
+            mim.set_output,
+            channel=1,
+            output_gain=self._MIM_OUTPUT_GAIN,
+            strict=False,
+        )
 
     def start_logging(
         self,
@@ -292,16 +356,12 @@ class MokuProDatalogger:
             raise ValueError("Waveform Generator frequency must be greater than 0 Hz")
 
         waveform_type = self._normalize_waveform_type(waveform)
-        response = self._api_call(
-            self._require_instrument().generate_waveform,
+        return self._generate_waveform_with_verified_timeout(
             channel=channel,
-            type=waveform_type,
-            frequency=float(frequency_hz),
-            amplitude=float(vpp),
-            offset=0.0,
-            strict=False,
+            waveform_type=waveform_type,
+            vpp=float(vpp),
+            frequency_hz=float(frequency_hz),
         )
-        return response if isinstance(response, dict) else {"response": response}
 
     def stop_waveform_generator(self, channel: int = 1) -> dict:
         """Drive the Moku waveform-generator output to 0 V."""
@@ -310,13 +370,7 @@ class MokuProDatalogger:
         if channel != 1:
             raise ValueError("Only Moku Waveform Generator output 1 is supported")
 
-        response = self._api_call(
-            self._require_instrument().generate_waveform,
-            channel=channel,
-            type="Off",
-            strict=False,
-        )
-        return response if isinstance(response, dict) else {"response": response}
+        return self._stop_waveform_with_verified_timeout(channel=channel)
 
     def generate_signal(
         self,
@@ -409,13 +463,16 @@ class MokuProDatalogger:
         }
 
     def disconnect(self):
-        instrument = self._instrument
-        if instrument is not None:
+        owner = self._mim if self._mim is not None else self._instrument
+        if owner is not None:
             try:
-                self._api_call(instrument.relinquish_ownership)
+                self._api_call(owner.relinquish_ownership)
             except Exception as exc:
                 logger.warning("Failed to relinquish Moku:Pro ownership: %s", exc)
         self._instrument = None
+        self._mim = None
+        self._waveform_generator = None
+        self._use_multi_instrument = False
         self._is_connected = False
 
     @property
@@ -444,9 +501,342 @@ class MokuProDatalogger:
             raise RuntimeError("Moku:Pro API instrument is not connected")
         return self._instrument
 
+    def _require_mim(self):
+        if self._mim is None:
+            raise RuntimeError("Moku:Pro Multi-Instrument API is not connected")
+        return self._mim
+
+    def _require_waveform_generator(self):
+        if self._waveform_generator is None:
+            raise RuntimeError("Moku:Pro Waveform Generator API is not connected")
+        return self._waveform_generator
+
     def _api_call(self, func, *args, **kwargs):
         with self._api_lock:
             return func(*args, **kwargs)
+
+    def _api_call_with_read_timeout(self, read_timeout_seconds: float, func, *args, **kwargs):
+        with self._api_lock:
+            instrument = self._require_instrument()
+            session = getattr(instrument, "session", None)
+            if session is None or not hasattr(session, "read_timeout"):
+                return func(*args, **kwargs)
+
+            original_timeout = session.read_timeout
+            session.read_timeout = read_timeout_seconds
+            try:
+                return func(*args, **kwargs)
+            finally:
+                session.read_timeout = original_timeout
+
+    def _api_setting_call(self, func, *args, **kwargs):
+        try:
+            return self._api_call_with_read_timeout(
+                self._SETTING_COMMAND_READ_TIMEOUT_SECONDS,
+                func,
+                *args,
+                **kwargs,
+            )
+        except Exception as exc:
+            if not self._is_timeout_exception(exc):
+                raise
+            logger.info("Moku setting command timed out; verifying state later: %s", exc)
+            return None
+
+    @staticmethod
+    def _is_timeout_exception(exc: Exception) -> bool:
+        name = type(exc).__name__.lower()
+        message = str(exc).lower()
+        return "timeout" in name or "timed out" in message or "read timeout" in message
+
+    @classmethod
+    def _verify_voltage_channel_summary(
+        cls,
+        summary: str,
+        *,
+        expected_sample_rate_hz: float,
+    ):
+        input_lines = {
+            channel: cls._input_summary_line(summary, channel)
+            for channel in (1, 2, 3, 4)
+        }
+
+        for channel in (1, 2):
+            line = input_lines[channel]
+            range_ok = "400 mVpp" in line or line.startswith(("Input A ", "Input B "))
+            if "(on)" not in line or not range_ok:
+                raise RuntimeError(f"Moku Input {channel} was not configured for logging: {line}")
+
+        for channel in (3, 4):
+            line = input_lines[channel]
+            if "(off)" not in line:
+                raise RuntimeError(f"Moku Input {channel} was not disabled: {line}")
+
+        acquisition_line = cls._acquisition_summary_line(summary)
+        if "Normal mode" not in acquisition_line:
+            raise RuntimeError(f"Moku acquisition mode was not Normal: {acquisition_line}")
+
+        match = re.search(r",\s*([-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?)\s*Hz", acquisition_line)
+        if not match:
+            raise RuntimeError(f"Could not parse Moku acquisition sample rate: {acquisition_line}")
+
+        actual_sample_rate_hz = float(match.group(1))
+        if not math.isclose(
+            actual_sample_rate_hz,
+            expected_sample_rate_hz,
+            rel_tol=1e-3,
+            abs_tol=1e-6,
+        ):
+            raise RuntimeError(
+                f"Moku sample rate is {actual_sample_rate_hz:g} Hz, "
+                f"expected {expected_sample_rate_hz:g} Hz"
+            )
+
+    def _generate_waveform_with_verified_timeout(
+        self,
+        channel: int,
+        waveform_type: str,
+        vpp: float,
+        frequency_hz: float,
+    ) -> dict:
+        params = {
+            "channel": channel,
+            "type": waveform_type,
+            "frequency": frequency_hz,
+            "amplitude": vpp,
+            "offset": 0.0,
+            "strict": False,
+        }
+        generator = (
+            self._require_waveform_generator()
+            if self._use_multi_instrument
+            else self._require_instrument()
+        )
+        try:
+            response = self._api_call_with_read_timeout(
+                self._WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS,
+                generator.generate_waveform,
+                **params,
+            )
+            summary = self._api_call(generator.summary)
+            self._verify_waveform_summary(
+                summary,
+                channel=channel,
+                expected_enabled=True,
+                expected_waveform=waveform_type,
+                expected_vpp=vpp,
+                expected_frequency_hz=frequency_hz,
+            )
+            result = response if isinstance(response, dict) else {"response": response}
+            result["verification_summary"] = summary
+            return result
+        except Exception as exc:
+            summary = self._verified_summary_after_waveform_exception(
+                exc,
+                channel=channel,
+                expected_enabled=True,
+                expected_waveform=waveform_type,
+                expected_vpp=vpp,
+                expected_frequency_hz=frequency_hz,
+            )
+            return {
+                "status": "verified_after_timeout",
+                "warning": str(exc),
+                "verification_summary": summary,
+            }
+
+    def _stop_waveform_with_verified_timeout(self, channel: int) -> dict:
+        generator = (
+            self._require_waveform_generator()
+            if self._use_multi_instrument
+            else self._require_instrument()
+        )
+        try:
+            response = self._api_call_with_read_timeout(
+                self._WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS,
+                generator.generate_waveform,
+                channel=channel,
+                type="Off",
+                strict=False,
+            )
+            summary = self._api_call(generator.summary)
+            self._verify_waveform_summary(
+                summary,
+                channel=channel,
+                expected_enabled=False,
+            )
+            result = response if isinstance(response, dict) else {"response": response}
+            result["verification_summary"] = summary
+            return result
+        except Exception as exc:
+            summary = self._verified_summary_after_waveform_exception(
+                exc,
+                channel=channel,
+                expected_enabled=False,
+            )
+            return {
+                "status": "verified_after_timeout",
+                "warning": str(exc),
+                "verification_summary": summary,
+            }
+
+    def _verified_summary_after_waveform_exception(
+        self,
+        exc: Exception,
+        *,
+        channel: int,
+        expected_enabled: bool,
+        expected_waveform: Optional[str] = None,
+        expected_vpp: Optional[float] = None,
+        expected_frequency_hz: Optional[float] = None,
+    ) -> str:
+        try:
+            generator = (
+                self._require_waveform_generator()
+                if self._use_multi_instrument
+                else self._require_instrument()
+            )
+            summary = self._api_call(generator.summary)
+            self._verify_waveform_summary(
+                summary,
+                channel=channel,
+                expected_enabled=expected_enabled,
+                expected_waveform=expected_waveform,
+                expected_vpp=expected_vpp,
+                expected_frequency_hz=expected_frequency_hz,
+            )
+            logger.info("Moku waveform command timed out but verified output state: %s", exc)
+            return summary
+        except Exception:
+            raise exc
+
+    @classmethod
+    def _verify_waveform_summary(
+        cls,
+        summary: str,
+        *,
+        channel: int,
+        expected_enabled: bool,
+        expected_waveform: Optional[str] = None,
+        expected_vpp: Optional[float] = None,
+        expected_frequency_hz: Optional[float] = None,
+    ):
+        line = cls._output_summary_line(summary, channel)
+        expected_state = "on" if expected_enabled else "off"
+        output_label = str(channel)
+        if line.startswith("Output A "):
+            output_label = "A"
+        elif line.startswith("Output B "):
+            output_label = "B"
+        elif line.startswith("Output C "):
+            output_label = "C"
+        elif line.startswith("Output D "):
+            output_label = "D"
+        state_match = re.search(rf"^Output {output_label} \((on|off)\) - ([A-Za-z]+)", line)
+        if not state_match:
+            raise RuntimeError(f"Could not parse Moku output summary line: {line}")
+
+        actual_state = state_match.group(1)
+        actual_waveform = state_match.group(2)
+        if actual_state != expected_state:
+            raise RuntimeError(
+                f"Moku Output {channel} state is {actual_state}, expected {expected_state}: {line}"
+            )
+
+        if not expected_enabled:
+            return
+
+        if expected_waveform and actual_waveform.lower() != expected_waveform.lower():
+            raise RuntimeError(
+                f"Moku Output {channel} waveform is {actual_waveform}, "
+                f"expected {expected_waveform}: {line}"
+            )
+
+        segments = [segment.strip() for segment in line.split(",")]
+        if expected_frequency_hz is not None and len(segments) > 1:
+            actual_frequency_hz = cls._parse_summary_quantity(segments[1])
+            if actual_frequency_hz is None or not math.isclose(
+                actual_frequency_hz,
+                expected_frequency_hz,
+                rel_tol=1e-3,
+                abs_tol=1e-6,
+            ):
+                raise RuntimeError(
+                    f"Moku Output {channel} frequency is {segments[1]}, "
+                    f"expected {expected_frequency_hz:g} Hz"
+                )
+
+        if expected_vpp is not None and len(segments) > 2:
+            actual_vpp = cls._parse_summary_quantity(segments[2])
+            if actual_vpp is None or not math.isclose(
+                actual_vpp,
+                expected_vpp,
+                rel_tol=1e-3,
+                abs_tol=1e-6,
+            ):
+                raise RuntimeError(
+                    f"Moku Output {channel} amplitude is {segments[2]}, "
+                    f"expected {expected_vpp:g} Vpp"
+                )
+
+    @staticmethod
+    def _output_summary_line(summary: str, channel: int) -> str:
+        prefixes = [f"Output {channel} "]
+        if channel == 1:
+            prefixes.append("Output A ")
+        elif channel == 2:
+            prefixes.append("Output B ")
+        elif channel == 3:
+            prefixes.append("Output C ")
+        elif channel == 4:
+            prefixes.append("Output D ")
+        for line in summary.splitlines():
+            if any(line.startswith(prefix) for prefix in prefixes):
+                return line
+        raise RuntimeError(f"Moku summary did not include Output {channel}")
+
+    @staticmethod
+    def _input_summary_line(summary: str, channel: int) -> str:
+        prefixes = [f"Input {channel} "]
+        if channel == 1:
+            prefixes.append("Input A ")
+        elif channel == 2:
+            prefixes.append("Input B ")
+        elif channel == 3:
+            prefixes.append("Input C ")
+        elif channel == 4:
+            prefixes.append("Input D ")
+        for line in summary.splitlines():
+            if any(line.startswith(prefix) for prefix in prefixes):
+                return line
+        raise RuntimeError(f"Moku summary did not include Input {channel}")
+
+    @staticmethod
+    def _acquisition_summary_line(summary: str) -> str:
+        for line in summary.splitlines():
+            if line.startswith("Acquisition:"):
+                return line
+        raise RuntimeError("Moku summary did not include acquisition settings")
+
+    @staticmethod
+    def _parse_summary_quantity(value: str) -> Optional[float]:
+        compact = re.sub(r"(?<=\d)\s+(?=\d)", "", value.strip())
+        match = re.match(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-z]+)", compact)
+        if not match:
+            return None
+
+        number = float(match.group(1))
+        unit = match.group(2).lower()
+        if unit in {"hz", "vpp", "v"}:
+            return number
+        if unit in {"khz", "kvpp", "kv"}:
+            return number * 1_000
+        if unit in {"mhz", "mvpp", "mv"}:
+            multiplier = 1_000_000 if unit == "mhz" else 1e-3
+            return number * multiplier
+        if unit in {"uvpp", "uv"}:
+            return number * 1e-6
+        return None
 
     @staticmethod
     def _format_value(value: object) -> str:

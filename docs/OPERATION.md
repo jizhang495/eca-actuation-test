@@ -149,7 +149,7 @@ Moku presets use `sampling_rate_hz` for the app's lightweight timing loop and `m
 
 The Moku wiring convention is CH1 applied voltage through a 10x probe and CH2 shunt voltage through 1x. The app configures both Moku inputs for `400mVpp` frontend range, then multiplies raw Input 1 values by 10 when writing `moku_waveform.csv`. `ch1_voltage` is therefore circuit voltage. `ch2_voltage` remains the 1x shunt voltage used for current conversion.
 
-Moku mode can also schedule Data Logger built-in Waveform Generator Output 1. Multi-instrument mode is not required for this: the Data Logger instrument already exposes the analog output waveform generator while CH1/CH2 file logging remains active. The UI shows the stage editor only in Moku mode, and saved JSON uses:
+Moku mode can also schedule Waveform Generator Output 1 stages. When stages are present, the backend uses Moku Multi-Instrument Mode with Data Logger in slot 1, Waveform Generator in slot 2, and `Slot2OutA -> Output1`. This is required for output stages that turn on or off while CH1/CH2 file logging is active. Moku runs without waveform stages use the simpler Data Logger instrument. The UI shows the stage editor only in Moku mode, and saved JSON uses:
 
 ```json
 "moku_waveform_generator_stages": [
@@ -163,7 +163,7 @@ Moku mode can also schedule Data Logger built-in Waveform Generator Output 1. Mu
 ]
 ```
 
-Supported waveform names are `Sine`, `Square`, `Ramp`, and `Pulse`. The backend calls the Python API as `Datalogger.generate_waveform`, using the Data Logger's built-in waveform generator so CH1/CH2 file logging can stay active. It maps `vpp` to Moku's `amplitude` argument with `offset=0` and configures Output 1 for high-impedance termination. At gaps between stages and at stop/cancel, the app switches the output channel `Off`.
+Supported waveform names are `Sine`, `Square`, `Ramp`, and `Pulse`. The backend calls the Python API as `WaveformGenerator.generate_waveform` in MIM stage mode and maps `vpp` to Moku's peak-to-peak `amplitude` argument with `offset=0`. The app configures MIM Output 1 gain to `14dB`, matching the loopback test where a 0.4 Vpp stage measured about 0.39 Vpp after the app's CH1 10x scaling. At gaps between stages and at stop/cancel, the app switches the output channel `Off`.
 
 Moku time alignment uses the `start_logging` acknowledgement timestamp when available, not the earlier command request timestamp, so the ready-delay samples are cropped correctly and the app CSV covers the full run.
 

@@ -104,6 +104,9 @@ uv run python3 scripts/plot_oscilloscope_waveform.py \
   user-data/sessions/<session>/oscilloscope_waveform.csv \
   --analysis-output user-data/sessions/<session>/oscilloscope_waveform_analysis.svg
 
+# Plot the latest Moku session's CH1/CH2 waveform (auto-finds newest moku_waveform.csv)
+./plot-moku.sh
+
 # Fit relay-edge current and plot whole-run charge transfer
 uv run python3 scripts/analyze_charge_transfer.py \
   user-data/sessions/<session>

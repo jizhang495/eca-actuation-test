@@ -49,7 +49,7 @@ The browser is a monitor and operator console. It must not be the only way to ru
 - Oscilloscope or Moku:Pro mode is the preferred mode for sharp current peaks at relay edges.
 - Full-record Tektronix capture should start before `t0`, include the ready delay and planned run duration, stop with the measurement, and export the whole waveform to the session folder.
 - Moku:Pro Data Logger capture should start before `t0`, crop pre-`t0` samples from the app CSV, stop with the measurement, and export full-run CH1/CH2 data to the session folder. `moku_sample_rate_hz` controls the Moku file rate separately from the app timing loop.
-- Moku:Pro Waveform Generator stages, when configured, should use the same `t0` clock as voltage and relay stages. The saved config key is `moku_waveform_generator_stages`; each stage has `start_time`, `end_time`, `waveform`, `vpp`, and `frequency_hz`. These stages use the Data Logger's built-in Output 1 waveform generator; multi-instrument mode is not required unless future experiments need a separate Moku instrument or unsupported output routing.
+- Moku:Pro Waveform Generator stages, when configured, should use the same `t0` clock as voltage and relay stages. The saved config key is `moku_waveform_generator_stages`; each stage has `start_time`, `end_time`, `waveform`, `vpp`, and `frequency_hz`. Staged output during active logging uses Moku Multi-Instrument Mode: Data Logger in slot 1, Waveform Generator in slot 2, and `Slot2OutA -> Output1`. Logging-only Moku runs use the simpler Data Logger instrument.
 - The current analysis convention is `current_mA = ch2_voltage / 330 * 1000`.
 
 ### 3.4 Camera and Video
