@@ -123,10 +123,14 @@ class SaveExperimentConfigResponse(BaseModel):
 
 class StopMeasurementResponse(BaseModel):
     """Response after stopping a measurement."""
-    session_id: str
-    csv_path: str
-    config_path: str
-    log_path: str
+    status: str = Field(
+        default="stopped",
+        description="stopped on a real stop; already_stopping/not_measuring for idempotent no-ops",
+    )
+    session_id: Optional[str] = None
+    csv_path: Optional[str] = None
+    config_path: Optional[str] = None
+    log_path: Optional[str] = None
     oscilloscope_csv_path: Optional[str] = None
     oscilloscope_metadata_path: Optional[str] = None
     moku_csv_path: Optional[str] = None
@@ -165,6 +169,7 @@ class RuntimeEvent(BaseModel):
 class SystemStatus(BaseModel):
     """Overall system status."""
     is_measuring: bool
+    is_stopping: bool = False
     camera_recording: bool
     camera_available: bool
     camera_timing: dict = Field(default_factory=dict)

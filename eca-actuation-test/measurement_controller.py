@@ -478,9 +478,14 @@ class MeasurementController:
             Dictionary with session information and file paths
         """
         if self._is_stopping:
-            raise RuntimeError("Measurement is already stopping")
+            # Idempotent no-op: a stop is already underway. Returning a benign
+            # status (instead of raising) keeps repeated UI clicks and agent or
+            # script retries from surfacing a spurious failure.
+            logger.info("Stop requested while already stopping; treating as no-op")
+            return {"status": "already_stopping", "session_id": self.current_session_id}
         if not self.is_measuring:
-            raise RuntimeError("No measurement in progress")
+            logger.info("Stop requested with no active measurement; treating as no-op")
+            return {"status": "not_measuring", "session_id": self.current_session_id}
 
         logger.info("Stopping measurement...")
         self._is_stopping = True
@@ -724,6 +729,7 @@ class MeasurementController:
         # Prepare response
         session_dir = self.data_logger.current_session_dir
         response = {
+            "status": "stopped",
             "session_id": self.current_session_id,
             "csv_path": str(self.data_logger.csv_file),
             "config_path": str(self.data_logger.config_file),

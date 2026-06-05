@@ -80,6 +80,7 @@ interface RuntimeEvent {
 
 interface SystemStatus {
   is_measuring: boolean;
+  is_stopping?: boolean;
   camera_recording: boolean;
   camera_available: boolean;
   session_id: string | null;
@@ -400,6 +401,7 @@ export default function Home() {
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [serverStopping, setServerStopping] = useState(false);
   const [cameraStatus, setCameraStatus] = useState({ recording: false, available: false });
   const [cameraDownloadStatus, setCameraDownloadStatus] =
     useState<CameraDownloadStatus | null>(null);
@@ -690,6 +692,7 @@ export default function Home() {
       const nextSessionId = data.session_id || null;
 
       setIsMeasuring(data.is_measuring);
+      setServerStopping(Boolean(data.is_stopping));
       setCameraStatus({
         recording: data.camera_recording,
         available: data.camera_available,
@@ -1027,7 +1030,7 @@ export default function Home() {
     // The stop sequence can take a while (e.g. Moku downloads/converts its
     // waveform off the device), so guard against duplicate clicks that would
     // otherwise hit the backend "already stopping" error.
-    if (isStopping) return;
+    if (isStopping || serverStopping) return;
     setIsStopping(true);
     try {
       const response = await fetch("/api/stop_measurement?control_source=ui", {
@@ -1041,6 +1044,12 @@ export default function Home() {
       }
 
       const data = await response.json();
+      if (data.status && data.status !== "stopped") {
+        // A stop is already underway (or nothing was running); let status
+        // polling reconcile the UI instead of reporting a failure.
+        console.log("Stop no-op:", data.status);
+        return;
+      }
       setIsMeasuring(false);
       setSessionId(null);
 
@@ -1061,6 +1070,9 @@ export default function Home() {
     }
   };
 
+  // Combine the optimistic local stop (instant button feedback) with the
+  // backend's is_stopping flag (so the state survives a mid-stop page reload).
+  const stopping = isStopping || serverStopping;
   const controlSourceLabel =
     controlSource === "ui"
       ? "Human UI"
@@ -1149,7 +1161,7 @@ export default function Home() {
 
             <Button
               onClick={handleStartMeasurement}
-              disabled={isMeasuring || isStarting || isStopping}
+              disabled={isMeasuring || isStarting || stopping}
               size="lg"
               className="min-w-0 gap-2 px-4"
             >
@@ -1162,17 +1174,17 @@ export default function Home() {
             </Button>
             <Button
               onClick={handleStopMeasurement}
-              disabled={!isMeasuring || isStarting || isStopping}
+              disabled={!isMeasuring || isStarting || stopping}
               variant="destructive"
               size="lg"
               className="min-w-0 gap-2 px-4"
             >
-              {isStopping ? (
+              {stopping ? (
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
               ) : (
                 <Square className="h-4 w-4 shrink-0" />
               )}
-              <span className="truncate">{isStopping ? "Stopping" : "Stop"}</span>
+              <span className="truncate">{stopping ? "Stopping" : "Stop"}</span>
             </Button>
           </div>
         </div>
