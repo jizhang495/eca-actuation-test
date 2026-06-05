@@ -399,6 +399,7 @@ export default function Home() {
   // State for measurements
   const [isMeasuring, setIsMeasuring] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [cameraStatus, setCameraStatus] = useState({ recording: false, available: false });
   const [cameraDownloadStatus, setCameraDownloadStatus] =
     useState<CameraDownloadStatus | null>(null);
@@ -1023,6 +1024,11 @@ export default function Home() {
   };
 
   const handleStopMeasurement = async () => {
+    // The stop sequence can take a while (e.g. Moku downloads/converts its
+    // waveform off the device), so guard against duplicate clicks that would
+    // otherwise hit the backend "already stopping" error.
+    if (isStopping) return;
+    setIsStopping(true);
     try {
       const response = await fetch("/api/stop_measurement?control_source=ui", {
         method: "POST",
@@ -1050,6 +1056,8 @@ export default function Home() {
     } catch (error) {
       console.error("Error stopping measurement:", error);
       alert("Failed to stop measurement. Check console for details.");
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -1141,7 +1149,7 @@ export default function Home() {
 
             <Button
               onClick={handleStartMeasurement}
-              disabled={isMeasuring || isStarting}
+              disabled={isMeasuring || isStarting || isStopping}
               size="lg"
               className="min-w-0 gap-2 px-4"
             >
@@ -1154,13 +1162,17 @@ export default function Home() {
             </Button>
             <Button
               onClick={handleStopMeasurement}
-              disabled={!isMeasuring || isStarting}
+              disabled={!isMeasuring || isStarting || isStopping}
               variant="destructive"
               size="lg"
               className="min-w-0 gap-2 px-4"
             >
-              <Square className="h-4 w-4 shrink-0" />
-              <span className="truncate">Stop</span>
+              {isStopping ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <Square className="h-4 w-4 shrink-0" />
+              )}
+              <span className="truncate">{isStopping ? "Stopping" : "Stop"}</span>
             </Button>
           </div>
         </div>
