@@ -1293,6 +1293,18 @@ export default function Home() {
                     ) : null}
                   </div>
                 ) : null}
+                {measurementSource === "moku" ? (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium uppercase leading-none tracking-wide text-muted-foreground">
+                      Waveform Generator
+                    </p>
+                    <MokuWaveformGeneratorConfigurator
+                      stages={mokuWaveformGeneratorStages}
+                      onStagesChange={setMokuWaveformGeneratorStages}
+                      disabled={isMeasuring || isStarting}
+                    />
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
             <DMMGraph
@@ -1447,14 +1459,6 @@ export default function Home() {
                 )}
               </CardContent>
             </Card>
-
-            {measurementSource === "moku" && (
-              <MokuWaveformGeneratorConfigurator
-                stages={mokuWaveformGeneratorStages}
-                onStagesChange={setMokuWaveformGeneratorStages}
-                disabled={isMeasuring || isStarting}
-              />
-            )}
 
             <VoltageStageConfigurator
               stages={voltageStages}

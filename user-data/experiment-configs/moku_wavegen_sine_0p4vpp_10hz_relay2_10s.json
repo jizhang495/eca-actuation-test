@@ -1,5 +1,5 @@
 {
-  "test_name": "moku_waveform_generator_sine_0p4vpp_10hz_relay2_10s",
+  "test_name": "moku_wavegen_sine_0p4vpp_10hz_relay2_10s",
   "measurement_source": "moku",
   "dmm1_visa_id": null,
   "dmm2_visa_id": null,

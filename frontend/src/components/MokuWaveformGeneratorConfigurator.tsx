@@ -1,7 +1,6 @@
 "use client";
 
 import React from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,11 +67,7 @@ export function MokuWaveformGeneratorConfigurator({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Waveform Generator</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="space-y-3">
         {stages.map((stage, index) => (
           <div key={index} className="flex items-end gap-3">
             <span className="w-5 text-right text-xs font-medium text-muted-foreground">
@@ -200,7 +195,6 @@ export function MokuWaveformGeneratorConfigurator({
           <Plus className="mr-2 h-4 w-4" />
           Add Stage {stages.length > 0 && `(${stages.length}/10)`}
         </Button>
-      </CardContent>
-    </Card>
+    </div>
   );
 }
