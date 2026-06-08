@@ -306,7 +306,8 @@ class MeasurementController:
                     "Moku current mode: SR551 differential, "
                     "current_mA = (CH2 - CH3) / "
                     f"({config.current_amplifier_gain:g} * "
-                    f"{config.current_shunt_ohms:g} ohm) * 1000"
+                    f"{config.current_shunt_ohms:g} ohm) * 1000; "
+                    f"CH2/CH3 input range {config.moku_current_input_range}"
                 )
 
         if config.record_camera:
@@ -1172,6 +1173,7 @@ class MeasurementController:
                     current_mode=config.moku_current_mode,
                     shunt_ohms=config.current_shunt_ohms,
                     amplifier_gain=config.current_amplifier_gain,
+                    current_input_range=config.moku_current_input_range,
                 )
                 logger.info("Mock Moku:Pro connected")
             else:
@@ -1235,6 +1237,7 @@ class MeasurementController:
                     current_mode=config.moku_current_mode,
                     shunt_ohms=config.current_shunt_ohms,
                     amplifier_gain=config.current_amplifier_gain,
+                    current_input_range=config.moku_current_input_range,
                 )
                 logger.info("Moku:Pro connected: %s", config.moku_address)
             else:

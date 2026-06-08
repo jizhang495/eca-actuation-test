@@ -8,6 +8,7 @@ MeasurementSource = Literal["dmm", "oscilloscope", "moku"]
 ControlSource = Literal["ui", "api", "agent", "script"]
 MokuWaveform = Literal["Sine", "Square", "Ramp", "Pulse"]
 MokuCurrentMode = Literal["raw_ch2_shunt", "sr551_differential"]
+MokuCurrentInputRange = Literal["400mVpp", "4Vpp"]
 MAX_MOKU_WAVEFORM_VPP = 2.0
 
 
@@ -83,6 +84,13 @@ class MeasurementConfig(BaseModel):
         default=10.0,
         description="Voltage gain before Moku current conversion",
         gt=0,
+    )
+    moku_current_input_range: MokuCurrentInputRange = Field(
+        default="400mVpp",
+        description=(
+            "Moku CH2/CH3 (current legs) input range; wider raises the clipping "
+            "ceiling at the cost of small-signal resolution"
+        ),
     )
     dmm_acquisition_mode: DMMAcquisitionMode = Field(
         default="fast",

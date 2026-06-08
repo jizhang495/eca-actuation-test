@@ -57,6 +57,15 @@ class MokuProDatalogger:
     # MIM set_output_termination is unsupported; with the current high-Z actuator
     # wiring a 0 dB output measures 2x the Waveform Generator command amplitude.
     _MIM_OUTPUT_AMPLITUDE_SCALE = 0.5
+    # Current-channel (CH2/CH3) input range options. The plain Datalogger path
+    # sets the Vpp range string directly; MIM mode sets the same range via input
+    # gain in dB (gain 0 dB == 400 mVpp; each -20 dB widens the range 10x).
+    # Moku:Pro MIM frontend gain only accepts 20 dB steps, so 2Vpp (-14dB) is not
+    # available in wavegen/MIM runs; expose only the verified 0 dB / -20 dB steps.
+    _CURRENT_INPUT_RANGE_TO_MIM_GAIN = {
+        "400mVpp": "0dB",
+        "4Vpp": "-20dB",
+    }
     _WAVEFORM_TYPES = {
         "off": "Off",
         "sine": "Sine",
@@ -79,6 +88,7 @@ class MokuProDatalogger:
         self._current_mode = self._CURRENT_MODE_RAW_CH2_SHUNT
         self._current_shunt_ohms = 330.0
         self._current_amplifier_gain = 1.0
+        self._current_input_range = self._CH2_FRONTEND_RANGE
         self._api_lock = threading.RLock()
         self.last_error: Optional[str] = None
         self.last_logging_start_request_monotonic: Optional[float] = None
@@ -234,6 +244,7 @@ class MokuProDatalogger:
         current_mode: str = _CURRENT_MODE_RAW_CH2_SHUNT,
         shunt_ohms: float = 330.0,
         amplifier_gain: float = 1.0,
+        current_input_range: str = _CH2_FRONTEND_RANGE,
     ):
         """Configure Data Logger voltage inputs and current-conversion metadata."""
         if not self._is_connected:
@@ -247,10 +258,16 @@ class MokuProDatalogger:
             raise ValueError("shunt_ohms must be greater than 0")
         if amplifier_gain <= 0:
             raise ValueError("amplifier_gain must be greater than 0")
+        if current_input_range not in self._CURRENT_INPUT_RANGE_TO_MIM_GAIN:
+            raise ValueError(
+                f"Unsupported Moku current input range: {current_input_range}; "
+                f"valid options are {sorted(self._CURRENT_INPUT_RANGE_TO_MIM_GAIN)}"
+            )
 
         self._current_mode = current_mode
         self._current_shunt_ohms = float(shunt_ohms)
         self._current_amplifier_gain = float(amplifier_gain)
+        self._current_input_range = current_input_range
 
         instrument = self._require_instrument()
         if self._use_multi_instrument:
@@ -276,7 +293,7 @@ class MokuProDatalogger:
                 channel=2,
                 impedance="1MOhm",
                 coupling="DC",
-                range=self._CH2_FRONTEND_RANGE,
+                range=self._current_input_range,
                 strict=False,
             )
             if enable_ch3:
@@ -285,7 +302,7 @@ class MokuProDatalogger:
                     channel=3,
                     impedance="1MOhm",
                     coupling="DC",
-                    range=self._CH3_FRONTEND_RANGE,
+                    range=self._current_input_range,
                     strict=False,
                 )
         self._api_setting_call(instrument.set_acquisition_mode, mode="Normal", strict=False)
@@ -298,6 +315,11 @@ class MokuProDatalogger:
             self._api_call(instrument.summary),
             expected_sample_rate_hz=float(sample_rate_hz),
             expect_ch3=enable_ch3,
+            expected_ranges={
+                1: self._CH1_FRONTEND_RANGE,
+                2: self._current_input_range,
+                3: self._current_input_range,
+            },
         )
 
         self._last_sample_rate_hz = sample_rate_hz
@@ -324,8 +346,8 @@ class MokuProDatalogger:
         mim = self._require_mim()
         frontend_settings = (
             (1, self._CH1_FRONTEND_RANGE),
-            (2, self._CH2_FRONTEND_RANGE),
-            (3, self._CH3_FRONTEND_RANGE),
+            (2, self._current_input_range),
+            (3, self._current_input_range),
         )
         for channel, frontend_range in frontend_settings:
             self._api_setting_call(
@@ -333,7 +355,7 @@ class MokuProDatalogger:
                 channel=channel,
                 impedance="1MOhm",
                 coupling="DC",
-                gain="0dB",
+                gain=self._mim_frontend_gain_for_range(frontend_range),
                 attenuation=None,
                 bandwidth=None,
                 strict=False,
@@ -514,8 +536,8 @@ class MokuProDatalogger:
                 },
                 "frontend_ranges": {
                     "ch1": self._CH1_FRONTEND_RANGE,
-                    "ch2": self._CH2_FRONTEND_RANGE,
-                    "ch3": self._CH3_FRONTEND_RANGE,
+                    "ch2": self._current_input_range,
+                    "ch3": self._current_input_range,
                 },
                 "current_mode": self._current_mode,
                 "current_shunt_ohms": self._current_shunt_ohms,
@@ -570,8 +592,8 @@ class MokuProDatalogger:
         """
         channel_meta = {
             "ch1": (self._CH1_FRONTEND_RANGE, self._CH1_PROBE_ATTENUATION),
-            "ch2": (self._CH2_FRONTEND_RANGE, self._CH2_PROBE_ATTENUATION),
-            "ch3": (self._CH3_FRONTEND_RANGE, self._CH3_PROBE_ATTENUATION),
+            "ch2": (self._current_input_range, self._CH2_PROBE_ATTENUATION),
+            "ch3": (self._current_input_range, self._CH3_PROBE_ATTENUATION),
         }
         channels: dict[str, dict] = {}
         any_clipped = False
@@ -619,6 +641,32 @@ class MokuProDatalogger:
         scale = {"": 1.0, "m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12}
         vpp = float(match.group(1)) * scale[match.group(2).lower()]
         return vpp / 2.0
+
+    @classmethod
+    def _mim_frontend_gain_for_range(cls, range_str: str) -> str:
+        try:
+            return cls._CURRENT_INPUT_RANGE_TO_MIM_GAIN[range_str]
+        except KeyError:
+            raise ValueError(f"No MIM frontend gain mapping for range: {range_str}")
+
+    def _current_input_range_scale(self) -> float:
+        """Factor to convert recorded CH2/CH3 back to true input voltage.
+
+        In MIM mode the CH2/CH3 range is widened with input gain (gain 0 dB ==
+        400 mVpp), which attenuates the recorded value; multiply by the range
+        ratio to recover the true input. The plain Datalogger ``range`` setting
+        is already input-referred, so the factor is 1.0 there.
+        """
+        if not self._use_multi_instrument:
+            return 1.0
+        mim_zero_db_vpp = 0.4  # MIM frontend gain "0dB" == 400 mVpp
+        range_vpp = self._frontend_range_half_volts(self._current_input_range) * 2.0
+        return range_vpp / mim_zero_db_vpp
+
+    @staticmethod
+    def _range_with_space(range_str: str) -> str:
+        """'400mVpp' -> '400 mVpp', '4Vpp' -> '4 Vpp' to match summary formatting."""
+        return re.sub(r"(\d)\s*(m?Vpp)", r"\1 \2", str(range_str))
 
     def _physical_to_command_vpp(self, physical_vpp: float) -> float:
         if self._use_multi_instrument:
@@ -706,18 +754,23 @@ class MokuProDatalogger:
         *,
         expected_sample_rate_hz: float,
         expect_ch3: bool = False,
+        expected_ranges: Optional[dict] = None,
     ):
         input_lines = {
             channel: cls._input_summary_line(summary, channel)
             for channel in (1, 2, 3, 4)
         }
 
+        expected_ranges = expected_ranges or {}
         enabled_channels = (1, 2, 3) if expect_ch3 else (1, 2)
         disabled_channels = (4,) if expect_ch3 else (3, 4)
 
         for channel in enabled_channels:
             line = input_lines[channel]
-            range_ok = "400 mVpp" in line or line.startswith(
+            expected_spaced = cls._range_with_space(
+                expected_ranges.get(channel, cls._CH1_FRONTEND_RANGE)
+            )
+            range_ok = expected_spaced in line or line.startswith(
                 ("Input A ", "Input B ", "Input C ")
             )
             if "(on)" not in line or not range_ok:
@@ -1117,6 +1170,9 @@ class MokuProDatalogger:
         ch1_attenuation = self._CH1_PROBE_ATTENUATION
         ch2_attenuation = self._CH2_PROBE_ATTENUATION
         ch3_attenuation = self._CH3_PROBE_ATTENUATION
+        # MIM widens the CH2/CH3 range via input gain, which scales the recorded
+        # value down; scale it back so ch2/ch3 are the true input voltage.
+        current_range_scale = self._current_input_range_scale()
         required_columns = [time_column, ch1_column, ch2_column]
         if self._current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL:
             if ch3_column is None:
@@ -1134,9 +1190,11 @@ class MokuProDatalogger:
             if aligned_time < 0:
                 continue
             ch1_voltage = float(row[ch1_column]) * ch1_attenuation
-            ch2_voltage = float(row[ch2_column]) * ch2_attenuation
+            ch2_voltage = float(row[ch2_column]) * ch2_attenuation * current_range_scale
             ch3_voltage = (
-                float(row[ch3_column]) * ch3_attenuation if ch3_column is not None else None
+                float(row[ch3_column]) * ch3_attenuation * current_range_scale
+                if ch3_column is not None
+                else None
             )
             if (
                 self._current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL

@@ -48,6 +48,7 @@ type ControlSource = "ui" | "api" | "agent" | "script";
 type DmmAcquisitionMode = "fast" | "low_noise";
 type MeasurementSource = "dmm" | "oscilloscope" | "moku";
 type MokuCurrentMode = "raw_ch2_shunt" | "sr551_differential";
+type MokuCurrentInputRange = "400mVpp" | "4Vpp";
 
 interface MeasurementConfig {
   test_name: string;
@@ -67,6 +68,7 @@ interface MeasurementConfig {
   moku_current_mode?: MokuCurrentMode;
   current_shunt_ohms?: number;
   current_amplifier_gain?: number;
+  moku_current_input_range?: MokuCurrentInputRange;
   dmm_acquisition_mode?: DmmAcquisitionMode;
   stop_after_seconds?: number | null;
   record_camera: boolean;
@@ -268,6 +270,8 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
     configValue.moku_current_mode === "sr551_differential"
       ? "sr551_differential"
       : "raw_ch2_shunt";
+  const mokuCurrentInputRange =
+    configValue.moku_current_input_range === "4Vpp" ? "4Vpp" : "400mVpp";
   const measurementSource =
     configValue.measurement_source === "dmm"
       ? "dmm"
@@ -310,6 +314,7 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
       10,
       "current_amplifier_gain"
     ),
+    moku_current_input_range: mokuCurrentInputRange,
     dmm_acquisition_mode: dmmAcquisitionMode,
     stop_after_seconds: stopAfterSeconds,
     record_camera: readBoolean(configValue.record_camera, false, "record_camera"),
@@ -477,6 +482,8 @@ export default function Home() {
     useState<MokuCurrentMode>("raw_ch2_shunt");
   const [currentShuntOhms, setCurrentShuntOhms] = useState(330);
   const [currentAmplifierGain, setCurrentAmplifierGain] = useState(10);
+  const [mokuCurrentInputRange, setMokuCurrentInputRange] =
+    useState<MokuCurrentInputRange>("400mVpp");
   const [dmmAcquisitionMode, setDmmAcquisitionMode] =
     useState<DmmAcquisitionMode>("fast");
   const [stopAtEnabled, setStopAtEnabled] = useState(false);
@@ -576,6 +583,7 @@ export default function Home() {
     setMokuCurrentMode(config.moku_current_mode || "raw_ch2_shunt");
     setCurrentShuntOhms(config.current_shunt_ohms || 330);
     setCurrentAmplifierGain(config.current_amplifier_gain || 10);
+    setMokuCurrentInputRange(config.moku_current_input_range || "400mVpp");
     setDmmAcquisitionMode(config.dmm_acquisition_mode || "fast");
     setStopAtEnabled(
       typeof config.stop_after_seconds === "number" &&
@@ -957,6 +965,7 @@ export default function Home() {
       moku_current_mode: mokuCurrentMode,
       current_shunt_ohms: currentShuntOhms,
       current_amplifier_gain: currentAmplifierGain,
+      moku_current_input_range: mokuCurrentInputRange,
       dmm_acquisition_mode: dmmAcquisitionMode,
       stop_after_seconds: stopAtEnabled ? stopAfterSeconds : null,
       record_camera: recordCamera,
@@ -973,6 +982,7 @@ export default function Home() {
     dmmAcquisitionMode,
     measurementSource,
     mokuAddress,
+    mokuCurrentInputRange,
     mokuCurrentMode,
     mokuSampleRate,
     mokuWaveformGeneratorStages,
@@ -1381,7 +1391,7 @@ export default function Home() {
                 ) : null}
                 {measurementSource === "moku" ? (
                   <div className="space-y-4">
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-4 sm:grid-cols-3">
                       <div className="space-y-1.5">
                         <Label
                           htmlFor="current-shunt-ohms"
@@ -1419,6 +1429,29 @@ export default function Home() {
                           step={0.001}
                           className="h-9"
                         />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="moku-current-input-range"
+                          className="text-xs uppercase tracking-wide text-muted-foreground"
+                        >
+                          Current Range
+                        </Label>
+                        <Select
+                          value={mokuCurrentInputRange}
+                          onValueChange={(value) =>
+                            setMokuCurrentInputRange(value as MokuCurrentInputRange)
+                          }
+                          disabled={isMeasuring || isStarting}
+                        >
+                          <SelectTrigger id="moku-current-input-range" className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="400mVpp">400 mVpp</SelectItem>
+                            <SelectItem value="4Vpp">4 Vpp</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                     <div className="space-y-1.5">

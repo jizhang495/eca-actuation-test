@@ -318,11 +318,13 @@ class MockMokuProDatalogger:
         current_mode: str = "raw_ch2_shunt",
         shunt_ohms: float = 330.0,
         amplifier_gain: float = 1.0,
+        current_input_range: str = "400mVpp",
     ):
         self._sample_rate_hz = sample_rate_hz
         self._current_mode = current_mode
         self._current_shunt_ohms = shunt_ohms
         self._current_amplifier_gain = amplifier_gain
+        self._current_input_range = current_input_range
 
     def start_logging(
         self,

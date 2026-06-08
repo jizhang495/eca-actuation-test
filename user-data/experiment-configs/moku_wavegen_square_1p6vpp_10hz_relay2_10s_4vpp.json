@@ -1,0 +1,39 @@
+{
+  "test_name": "moku_wavegen_square_1p6vpp_10hz_relay2_10s_4vpp",
+  "measurement_source": "moku",
+  "dmm1_visa_id": null,
+  "dmm2_visa_id": null,
+  "oscilloscope_visa_id": null,
+  "moku_address": "default",
+  "power_supply_visa_id": null,
+  "relay_port": "default",
+  "voltage_stages": [],
+  "relay_ch1_stages": [],
+  "relay_ch2_stages": [
+    {
+      "start_time": 1.0,
+      "end_time": 9.0,
+      "state": "closed"
+    }
+  ],
+  "moku_waveform_generator_stages": [
+    {
+      "start_time": 2.0,
+      "end_time": 8.0,
+      "waveform": "Square",
+      "vpp": 1.6,
+      "frequency_hz": 10.0
+    }
+  ],
+  "sampling_rate_hz": 10.0,
+  "moku_sample_rate_hz": 10000.0,
+  "moku_current_mode": "sr551_differential",
+  "current_shunt_ohms": 330.0,
+  "current_amplifier_gain": 10.0,
+  "moku_current_input_range": "4Vpp",
+  "dmm_acquisition_mode": "low_noise",
+  "stop_after_seconds": 10.0,
+  "record_camera": false,
+  "auto_download_camera_recording": false,
+  "camera_ready_delay_seconds": 1.0
+}
