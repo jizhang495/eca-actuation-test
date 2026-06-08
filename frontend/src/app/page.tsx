@@ -132,6 +132,7 @@ interface SaveExperimentConfigResponse {
 }
 
 const MAX_DATA_POINTS = 6000; // WebSocket updates at 10 Hz, so this keeps about 10 minutes visible.
+const MAX_MOKU_WAVEFORM_VPP = 2.0;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -242,7 +243,10 @@ const normalizeMokuWaveformGeneratorStages = (
         `moku_waveform_generator_stages[${index}].end_time`
       ),
       waveform: stage.waveform as MokuWaveform,
-      vpp: readNumber(stage.vpp, 0, `moku_waveform_generator_stages[${index}].vpp`),
+      vpp: Math.min(
+        MAX_MOKU_WAVEFORM_VPP,
+        readNumber(stage.vpp, 0, `moku_waveform_generator_stages[${index}].vpp`)
+      ),
       frequency_hz: readNumber(
         stage.frequency_hz,
         1,
@@ -887,6 +891,13 @@ export default function Home() {
         }
         if (!Number.isFinite(stage.vpp) || stage.vpp < 0) {
           alert(`Moku waveform generator stage ${i + 1}: Vpp must be 0 or greater.`);
+          return null;
+        }
+        if (stage.vpp > MAX_MOKU_WAVEFORM_VPP) {
+          alert(
+            `Moku waveform generator stage ${i + 1}: Vpp must not exceed ` +
+              `${MAX_MOKU_WAVEFORM_VPP} Vpp.`
+          );
           return null;
         }
         if (!Number.isFinite(stage.frequency_hz) || stage.frequency_hz <= 0) {

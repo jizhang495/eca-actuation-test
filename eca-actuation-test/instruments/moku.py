@@ -53,6 +53,7 @@ class MokuProDatalogger:
     _WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS = 0.5
     _MIM_PLATFORM_ID = 4
     _MIM_OUTPUT_GAIN = "0dB"
+    _MAX_PHYSICAL_OUTPUT_VPP = 2.0
     # MIM set_output_termination is unsupported; with the current high-Z actuator
     # wiring a 0 dB output measures 2x the Waveform Generator command amplitude.
     _MIM_OUTPUT_AMPLITUDE_SCALE = 0.5
@@ -416,6 +417,10 @@ class MokuProDatalogger:
             raise ValueError("Only Moku Waveform Generator output 1 is supported")
         if vpp < 0:
             raise ValueError("Waveform Generator Vpp must be non-negative")
+        if vpp > self._MAX_PHYSICAL_OUTPUT_VPP:
+            raise ValueError(
+                f"Waveform Generator Vpp must not exceed {self._MAX_PHYSICAL_OUTPUT_VPP:g} Vpp"
+            )
         if frequency_hz <= 0:
             raise ValueError("Waveform Generator frequency must be greater than 0 Hz")
 

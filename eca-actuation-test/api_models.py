@@ -8,6 +8,7 @@ MeasurementSource = Literal["dmm", "oscilloscope", "moku"]
 ControlSource = Literal["ui", "api", "agent", "script"]
 MokuWaveform = Literal["Sine", "Square", "Ramp", "Pulse"]
 MokuCurrentMode = Literal["raw_ch2_shunt", "sr551_differential"]
+MAX_MOKU_WAVEFORM_VPP = 2.0
 
 
 class VoltageStage(BaseModel):
@@ -29,7 +30,12 @@ class MokuWaveformGeneratorStage(BaseModel):
     start_time: float = Field(..., description="Start time in seconds", ge=0)
     end_time: float = Field(..., description="End time in seconds", ge=0)
     waveform: MokuWaveform = Field(..., description="Waveform type")
-    vpp: float = Field(..., description="Output amplitude in Vpp", ge=0)
+    vpp: float = Field(
+        ...,
+        description="Physical output amplitude in Vpp",
+        ge=0,
+        le=MAX_MOKU_WAVEFORM_VPP,
+    )
     frequency_hz: float = Field(..., description="Output frequency in Hz", gt=0)
 
 

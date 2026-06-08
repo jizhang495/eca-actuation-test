@@ -163,7 +163,7 @@ Moku mode can also schedule Waveform Generator Output 1 stages. When stages are 
 ]
 ```
 
-Supported waveform names are `Sine`, `Square`, `Ramp`, and `Pulse`. The backend calls the Python API as `WaveformGenerator.generate_waveform` in MIM stage mode with `offset=0`. The app configures MIM Output 1 gain to `0dB` and compensates the command amplitude by 0.5 so the saved stage `vpp` matches the measured physical output voltage in the high-impedance actuator setup. At gaps between stages and at stop/cancel, the app switches the output channel `Off`.
+Supported waveform names are `Sine`, `Square`, `Ramp`, and `Pulse`. The backend calls the Python API as `WaveformGenerator.generate_waveform` in MIM stage mode with `offset=0`. The app configures MIM Output 1 gain to `0dB` and compensates the command amplitude by 0.5 so the saved stage `vpp` matches the measured physical output voltage in the high-impedance actuator setup. Moku waveform-generator stages are hard-limited to 2.0 Vpp by the UI, API schema, backend validation, and driver command path. At gaps between stages and at stop/cancel, the app switches the output channel `Off`.
 
 Moku time alignment uses the `start_logging` acknowledgement timestamp when available, not the earlier command request timestamp, so the ready-delay samples are cropped correctly and the app CSV covers the full run.
 

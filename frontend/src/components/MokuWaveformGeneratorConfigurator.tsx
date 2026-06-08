@@ -30,6 +30,7 @@ interface MokuWaveformGeneratorConfiguratorProps {
 }
 
 const WAVEFORMS: MokuWaveform[] = ["Sine", "Square", "Ramp", "Pulse"];
+const MAX_MOKU_WAVEFORM_VPP = 2.0;
 
 export function MokuWaveformGeneratorConfigurator({
   stages,
@@ -140,10 +141,18 @@ export function MokuWaveformGeneratorConfigurator({
                   id={`moku-sg-${index}-vpp`}
                   type="number"
                   min={0}
+                  max={MAX_MOKU_WAVEFORM_VPP}
                   step="0.001"
                   value={stage.vpp}
                   onChange={(event) =>
-                    updateStage(index, "vpp", Math.max(0, parseFloat(event.target.value) || 0))
+                    updateStage(
+                      index,
+                      "vpp",
+                      Math.min(
+                        MAX_MOKU_WAVEFORM_VPP,
+                        Math.max(0, parseFloat(event.target.value) || 0)
+                      )
+                    )
                   }
                   disabled={disabled}
                   className="h-9"

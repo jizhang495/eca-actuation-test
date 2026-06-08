@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTRUMENT_ADDRESS_FILE = REPO_ROOT / "user-data" / "instrument-addresses.json"
 DEFAULT_INSTRUMENT_VALUES = {"", "auto", "default"}
+MAX_MOKU_WAVEFORM_VPP = 2.0
 
 
 class MeasurementController:
@@ -1115,6 +1116,11 @@ class MeasurementController:
             if stage.end_time <= stage.start_time:
                 raise RuntimeError(
                     f"Moku waveform generator stage {index} end time must be after start time"
+                )
+            if stage.vpp > MAX_MOKU_WAVEFORM_VPP:
+                raise RuntimeError(
+                    f"Moku waveform generator stage {index} exceeds "
+                    f"{MAX_MOKU_WAVEFORM_VPP:g} Vpp safety limit"
                 )
 
         for channel, stages in ((1, config.relay_ch1_stages), (2, config.relay_ch2_stages)):
