@@ -131,10 +131,28 @@ COM4
    mokucli instrument download 4.2.2 --hw-version mokupro
    ```
 7. Connect Input 1 to the applied voltage signal using the 10x probe. The app treats Moku Input 1 as 10x and writes normalized circuit voltage to `moku_waveform.csv`.
-8. Connect Input 2 to the current shunt voltage using 1x. The app converts current as `ch2_voltage / 330`.
-9. If using the Moku output as the voltage source, wire Output 1 to the actuator drive node and the output reference/shield to circuit reference. When `moku_waveform_generator_stages` are configured, the app uses Moku Multi-Instrument Mode so the Waveform Generator can change Output 1 while the Data Logger records CH1/CH2.
-10. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource.
-11. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
+8. For raw shunt mode, connect Input 2 to the current shunt voltage using 1x. The app converts current as `ch2_voltage / 330`.
+9. For SR551 mode, connect SR551 output A to Moku Input 2 and output B to Moku Input 3. The SR551 output is always balanced differential, so the app records both outputs and computes `CH2 - CH3`. On the SR551 input side, use either single-ended mode with input A on shunt high and the selector at `A`, or differential mode with input A on shunt high, input B on shunt low/ground, and the selector at `A-B`. Use `moku_current_mode: "sr551_differential"`, `current_shunt_ohms: 330`, and `current_amplifier_gain: 10`.
+10. If using the Moku output as the voltage source, wire Output 1 to the actuator drive node and the output reference/shield to circuit reference. When `moku_waveform_generator_stages` are configured, the app uses Moku Multi-Instrument Mode so the Waveform Generator can change Output 1 while the Data Logger records the configured Moku inputs.
+11. In the app, choose `Moku:Pro` as the measurement source and select the discovered `MOKU::...` resource, or choose `Default from instrument-addresses.json`.
+12. Set the Moku rate with `moku_sample_rate_hz`; the 750 s preset uses 10 kSa/s.
+
+#### Instrument Address Defaults
+Saved presets may use `default`, `auto`, or `null` for volatile instrument fields. The backend resolves those values at run start from:
+
+```text
+user-data/instrument-addresses.json
+```
+
+For example, Moku can be pinned by serial number while allowing its IPv6 interface suffix to change:
+
+```json
+{
+  "moku_address": "auto",
+  "moku_serial": "783",
+  "relay_port": "auto"
+}
+```
 
 #### Relay Board (USB-RLY08C)
 1. Connect via USB

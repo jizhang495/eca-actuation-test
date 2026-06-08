@@ -3,9 +3,9 @@
   "measurement_source": "oscilloscope",
   "dmm1_visa_id": null,
   "dmm2_visa_id": null,
-  "oscilloscope_visa_id": "USB0::1689::967::C020294::0::INSTR",
-  "power_supply_visa_id": "USB0::11975::25618::800624011767410027::0::INSTR",
-  "relay_port": "/dev/ttyACM0",
+  "oscilloscope_visa_id": "default",
+  "power_supply_visa_id": "default",
+  "relay_port": "default",
   "voltage_stages": [
     {
       "start_time": 0.0,

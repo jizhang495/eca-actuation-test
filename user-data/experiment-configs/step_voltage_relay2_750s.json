@@ -1,9 +1,9 @@
 {
   "test_name": "step_voltage_relay2_750s",
-  "dmm1_visa_id": "USB0::1510::8464::8017058::0::INSTR",
-  "dmm2_visa_id": "USB0::1510::8464::8016020::0::INSTR",
-  "power_supply_visa_id": "USB0::11975::25618::800624011767410027::0::INSTR",
-  "relay_port": "/dev/ttyACM0",
+  "dmm1_visa_id": "default",
+  "dmm2_visa_id": "default",
+  "power_supply_visa_id": "default",
+  "relay_port": "default",
   "voltage_stages": [
     {
       "start_time": 0.0,

@@ -167,6 +167,38 @@ Supported waveform names are `Sine`, `Square`, `Ramp`, and `Pulse`. The backend 
 
 Moku time alignment uses the `start_logging` acknowledgement timestamp when available, not the earlier command request timestamp, so the ready-delay samples are cropped correctly and the app CSV covers the full run.
 
+For the SR551 current preamp setup, keep the current shunt in series with the load and record the SR551 balanced differential output:
+
+```text
+SR551 output A -> Moku CH2
+SR551 output B -> Moku CH3
+```
+
+The SR551 output is always a balanced differential signal, so the app computes current from `CH2 - CH3` even if the SR551 input is used single-ended.
+
+For the SR551 input side:
+
+```text
+Single-ended input: SR551 input A -> shunt high side, input selector -> A
+Differential input: SR551 input A -> shunt high side, input B -> shunt low side / ground, input selector -> A-B
+```
+
+If the shunt low side is circuit ground, single-ended `A` mode is acceptable. Do not leave SR551 input B floating when the SR551 input selector is in `A-B` mode. The Moku config should use:
+
+```json
+{
+  "moku_current_mode": "sr551_differential",
+  "current_shunt_ohms": 330.0,
+  "current_amplifier_gain": 10.0
+}
+```
+
+In this mode, `moku_waveform.csv` includes `ch3_voltage` and a precomputed `current_mA` column:
+
+```text
+current_mA = (ch2_voltage - ch3_voltage) / (current_shunt_ohms * current_amplifier_gain) * 1000
+```
+
 Moku output files:
 
 ```text
@@ -183,6 +215,28 @@ uv run python3 scripts/plot_oscilloscope_waveform.py \
   user-data/sessions/<session>/moku_waveform.csv \
   --analysis-output user-data/sessions/<session>/moku_waveform_analysis.svg
 ```
+
+When `current_mA` is present, the plotting helper uses it directly. Otherwise it falls back to `ch2_voltage / shunt_ohms * 1000`.
+
+## Instrument Address Defaults
+
+Saved presets should avoid volatile USB/VISA/Moku link-local addresses where possible. Use `default`, `auto`, or `null` in experiment configs and let the backend resolve the current address from:
+
+```text
+user-data/instrument-addresses.json
+```
+
+The file can pin stable identifiers such as the Moku serial number while allowing the address suffix or USB port to change:
+
+```json
+{
+  "moku_address": "auto",
+  "moku_serial": "783",
+  "relay_port": "auto"
+}
+```
+
+At run start, the backend resolves missing/default addresses through live discovery, saves the resolved addresses into the session `config.json`, and records the resolution in `log.txt`.
 
 ## Camera And Video Output
 

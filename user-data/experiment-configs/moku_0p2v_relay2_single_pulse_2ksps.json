@@ -4,9 +4,9 @@
   "dmm1_visa_id": null,
   "dmm2_visa_id": null,
   "oscilloscope_visa_id": null,
-  "moku_address": "MOKU::[fe80::7269:79ff:feb0:ca2%255]",
-  "power_supply_visa_id": "USB0::11975::25618::800624011767410027::0::INSTR",
-  "relay_port": "/dev/ttyACM0",
+  "moku_address": "default",
+  "power_supply_visa_id": "default",
+  "relay_port": "default",
   "voltage_stages": [
     {
       "start_time": 0.0,
@@ -35,6 +35,9 @@
   "moku_waveform_generator_stages": [],
   "sampling_rate_hz": 10.0,
   "moku_sample_rate_hz": 2000.0,
+  "moku_current_mode": "sr551_differential",
+  "current_shunt_ohms": 330.0,
+  "current_amplifier_gain": 10.0,
   "dmm_acquisition_mode": "low_noise",
   "stop_after_seconds": 20.0,
   "record_camera": false,
