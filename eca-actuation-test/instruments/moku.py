@@ -52,7 +52,10 @@ class MokuProDatalogger:
     _SETTING_COMMAND_READ_TIMEOUT_SECONDS = 2.0
     _WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS = 0.5
     _MIM_PLATFORM_ID = 4
-    _MIM_OUTPUT_GAIN = "14dB"
+    _MIM_OUTPUT_GAIN = "0dB"
+    # MIM set_output_termination is unsupported; with the current high-Z actuator
+    # wiring a 0 dB output measures 2x the Waveform Generator command amplitude.
+    _MIM_OUTPUT_AMPLITUDE_SCALE = 0.5
     _WAVEFORM_TYPES = {
         "off": "Off",
         "sine": "Sine",
@@ -417,10 +420,11 @@ class MokuProDatalogger:
             raise ValueError("Waveform Generator frequency must be greater than 0 Hz")
 
         waveform_type = self._normalize_waveform_type(waveform)
+        command_vpp = self._physical_to_command_vpp(float(vpp))
         return self._generate_waveform_with_verified_timeout(
             channel=channel,
             waveform_type=waveform_type,
-            vpp=float(vpp),
+            vpp=command_vpp,
             frequency_hz=float(frequency_hz),
         )
 
@@ -550,6 +554,11 @@ class MokuProDatalogger:
                 "CH2 and CH3 are the two SR551 balanced output legs"
             )
         return "current_mA = ch2_voltage / current_shunt_ohms * 1000"
+
+    def _physical_to_command_vpp(self, physical_vpp: float) -> float:
+        if self._use_multi_instrument:
+            return physical_vpp * self._MIM_OUTPUT_AMPLITUDE_SCALE
+        return physical_vpp
 
     @property
     def is_connected(self) -> bool:
