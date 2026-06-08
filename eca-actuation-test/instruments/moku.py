@@ -43,8 +43,12 @@ class MokuProDatalogger:
     RESOURCE_PREFIX = "MOKU::"
     _CH1_PROBE_ATTENUATION = 10.0
     _CH2_PROBE_ATTENUATION = 1.0
+    _CH3_PROBE_ATTENUATION = 1.0
     _CH1_FRONTEND_RANGE = "400mVpp"
     _CH2_FRONTEND_RANGE = "400mVpp"
+    _CH3_FRONTEND_RANGE = "400mVpp"
+    _CURRENT_MODE_RAW_CH2_SHUNT = "raw_ch2_shunt"
+    _CURRENT_MODE_SR551_DIFFERENTIAL = "sr551_differential"
     _SETTING_COMMAND_READ_TIMEOUT_SECONDS = 2.0
     _WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS = 0.5
     _MIM_PLATFORM_ID = 4
@@ -68,6 +72,9 @@ class MokuProDatalogger:
         self._mim = None
         self._waveform_generator = None
         self._use_multi_instrument = False
+        self._current_mode = self._CURRENT_MODE_RAW_CH2_SHUNT
+        self._current_shunt_ohms = 330.0
+        self._current_amplifier_gain = 1.0
         self._api_lock = threading.RLock()
         self.last_error: Optional[str] = None
         self.last_logging_start_request_monotonic: Optional[float] = None
@@ -216,16 +223,40 @@ class MokuProDatalogger:
             logger.error("Failed to connect to Moku:Pro at %s: %s", self.moku_address, exc)
             return False
 
-    def configure_voltage_channels(self, sample_rate_hz: float):
-        """Configure Data Logger inputs 1 and 2 for DC voltage logging."""
+    def configure_voltage_channels(
+        self,
+        sample_rate_hz: float,
+        *,
+        current_mode: str = _CURRENT_MODE_RAW_CH2_SHUNT,
+        shunt_ohms: float = 330.0,
+        amplifier_gain: float = 1.0,
+    ):
+        """Configure Data Logger voltage inputs and current-conversion metadata."""
         if not self._is_connected:
             raise RuntimeError("Moku:Pro not connected")
+        if current_mode not in {
+            self._CURRENT_MODE_RAW_CH2_SHUNT,
+            self._CURRENT_MODE_SR551_DIFFERENTIAL,
+        }:
+            raise ValueError(f"Unsupported Moku current mode: {current_mode}")
+        if shunt_ohms <= 0:
+            raise ValueError("shunt_ohms must be greater than 0")
+        if amplifier_gain <= 0:
+            raise ValueError("amplifier_gain must be greater than 0")
+
+        self._current_mode = current_mode
+        self._current_shunt_ohms = float(shunt_ohms)
+        self._current_amplifier_gain = float(amplifier_gain)
+
         instrument = self._require_instrument()
         if self._use_multi_instrument:
             self._configure_multi_instrument_routing()
+            self._configure_multi_instrument_frontends()
+
+        enable_ch3 = current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL
         self._api_setting_call(instrument.enable_input, channel=1, enable=True, strict=False)
         self._api_setting_call(instrument.enable_input, channel=2, enable=True, strict=False)
-        self._api_setting_call(instrument.enable_input, channel=3, enable=False, strict=False)
+        self._api_setting_call(instrument.enable_input, channel=3, enable=enable_ch3, strict=False)
         self._api_setting_call(instrument.enable_input, channel=4, enable=False, strict=False)
         if not self._use_multi_instrument:
             self._api_setting_call(
@@ -244,6 +275,15 @@ class MokuProDatalogger:
                 range=self._CH2_FRONTEND_RANGE,
                 strict=False,
             )
+            if enable_ch3:
+                self._api_setting_call(
+                    instrument.set_frontend,
+                    channel=3,
+                    impedance="1MOhm",
+                    coupling="DC",
+                    range=self._CH3_FRONTEND_RANGE,
+                    strict=False,
+                )
         self._api_setting_call(instrument.set_acquisition_mode, mode="Normal", strict=False)
         self._api_setting_call(
             instrument.set_samplerate,
@@ -253,6 +293,7 @@ class MokuProDatalogger:
         self._verify_voltage_channel_summary(
             self._api_call(instrument.summary),
             expected_sample_rate_hz=float(sample_rate_hz),
+            expect_ch3=enable_ch3,
         )
 
         self._last_sample_rate_hz = sample_rate_hz
@@ -264,6 +305,7 @@ class MokuProDatalogger:
             connections=[
                 {"source": "Input1", "destination": "Slot1InA"},
                 {"source": "Input2", "destination": "Slot1InB"},
+                {"source": "Input3", "destination": "Slot1InC"},
                 {"source": "Slot2OutA", "destination": "Output1"},
             ],
         )
@@ -273,6 +315,25 @@ class MokuProDatalogger:
             output_gain=self._MIM_OUTPUT_GAIN,
             strict=False,
         )
+
+    def _configure_multi_instrument_frontends(self):
+        mim = self._require_mim()
+        frontend_settings = (
+            (1, self._CH1_FRONTEND_RANGE),
+            (2, self._CH2_FRONTEND_RANGE),
+            (3, self._CH3_FRONTEND_RANGE),
+        )
+        for channel, frontend_range in frontend_settings:
+            self._api_setting_call(
+                mim.set_frontend,
+                channel=channel,
+                impedance="1MOhm",
+                coupling="DC",
+                gain="0dB",
+                attenuation=None,
+                bandwidth=None,
+                strict=False,
+            )
 
     def start_logging(
         self,
@@ -440,11 +501,17 @@ class MokuProDatalogger:
                 "probe_attenuation": {
                     "ch1": self._CH1_PROBE_ATTENUATION,
                     "ch2": self._CH2_PROBE_ATTENUATION,
+                    "ch3": self._CH3_PROBE_ATTENUATION,
                 },
                 "frontend_ranges": {
                     "ch1": self._CH1_FRONTEND_RANGE,
                     "ch2": self._CH2_FRONTEND_RANGE,
+                    "ch3": self._CH3_FRONTEND_RANGE,
                 },
+                "current_mode": self._current_mode,
+                "current_shunt_ohms": self._current_shunt_ohms,
+                "current_amplifier_gain": self._current_amplifier_gain,
+                "current_scaling": self._current_scaling_description(),
                 "voltage_scaling": (
                     "moku_waveform.csv stores circuit voltage; raw Moku input "
                     "columns are multiplied by the configured probe attenuation"
@@ -474,6 +541,15 @@ class MokuProDatalogger:
         self._waveform_generator = None
         self._use_multi_instrument = False
         self._is_connected = False
+
+    def _current_scaling_description(self) -> str:
+        if self._current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL:
+            return (
+                "current_mA = (ch2_voltage - ch3_voltage) / "
+                "(current_shunt_ohms * current_amplifier_gain) * 1000; "
+                "CH2 and CH3 are the two SR551 balanced output legs"
+            )
+        return "current_mA = ch2_voltage / current_shunt_ohms * 1000"
 
     @property
     def is_connected(self) -> bool:
@@ -555,19 +631,25 @@ class MokuProDatalogger:
         summary: str,
         *,
         expected_sample_rate_hz: float,
+        expect_ch3: bool = False,
     ):
         input_lines = {
             channel: cls._input_summary_line(summary, channel)
             for channel in (1, 2, 3, 4)
         }
 
-        for channel in (1, 2):
+        enabled_channels = (1, 2, 3) if expect_ch3 else (1, 2)
+        disabled_channels = (4,) if expect_ch3 else (3, 4)
+
+        for channel in enabled_channels:
             line = input_lines[channel]
-            range_ok = "400 mVpp" in line or line.startswith(("Input A ", "Input B "))
+            range_ok = "400 mVpp" in line or line.startswith(
+                ("Input A ", "Input B ", "Input C ")
+            )
             if "(on)" not in line or not range_ok:
                 raise RuntimeError(f"Moku Input {channel} was not configured for logging: {line}")
 
-        for channel in (3, 4):
+        for channel in disabled_channels:
             line = input_lines[channel]
             if "(off)" not in line:
                 raise RuntimeError(f"Moku Input {channel} was not disabled: {line}")
@@ -899,20 +981,19 @@ class MokuProDatalogger:
 
         return result.stdout
 
-    @classmethod
     def _read_converted_csv(
-        cls,
+        self,
         csv_path: Path,
         t0_offset_seconds: Optional[float],
     ) -> tuple[list[dict], dict]:
-        data = cls._read_moku_csv_table(csv_path)
+        data = self._read_moku_csv_table(csv_path)
         if data.empty:
             raise RuntimeError(f"Moku converted CSV contains no rows: {csv_path}")
 
         for column in data.columns:
             data[column] = pd.to_numeric(data[column], errors="coerce")
 
-        time_column = cls._find_column(data, ("time", "timestamp", "seconds"))
+        time_column = self._find_column(data, ("time", "timestamp", "seconds"))
         numeric_columns = [
             column for column in data.columns if pd.api.types.is_numeric_dtype(data[column])
         ]
@@ -920,14 +1001,19 @@ class MokuProDatalogger:
             time_column = numeric_columns[0]
 
         signal_columns = [column for column in numeric_columns if column != time_column]
-        ch1_column = cls._find_column(
+        ch1_column = self._find_column(
             data,
             ("ch1", "channel1", "input1", "probea", "input a", "input_a"),
             exclude={time_column},
         )
-        ch2_column = cls._find_column(
+        ch2_column = self._find_column(
             data,
             ("ch2", "channel2", "input2", "probeb", "input b", "input_b"),
+            exclude={time_column},
+        )
+        ch3_column = self._find_column(
+            data,
+            ("ch3", "channel3", "input3", "probec", "input c", "input_c"),
             exclude={time_column},
         )
 
@@ -940,35 +1026,73 @@ class MokuProDatalogger:
                 "Could not identify two voltage channels in Moku converted CSV; "
                 f"columns are {list(data.columns)}"
             )
+        if (
+            self._current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL
+            and ch3_column is None
+            and len(signal_columns) > 2
+        ):
+            ch3_column = signal_columns[2]
 
         offset = t0_offset_seconds or 0.0
         rows: list[dict] = []
         source_time0 = None
-        ch1_attenuation = cls._CH1_PROBE_ATTENUATION
-        ch2_attenuation = cls._CH2_PROBE_ATTENUATION
-        for index, row in data[[time_column, ch1_column, ch2_column]].dropna().iterrows():
+        ch1_attenuation = self._CH1_PROBE_ATTENUATION
+        ch2_attenuation = self._CH2_PROBE_ATTENUATION
+        ch3_attenuation = self._CH3_PROBE_ATTENUATION
+        required_columns = [time_column, ch1_column, ch2_column]
+        if self._current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL:
+            if ch3_column is None:
+                raise RuntimeError(
+                    "SR551 differential current mode requires Moku Input 3, but "
+                    f"converted columns are {list(data.columns)}"
+                )
+            required_columns.append(ch3_column)
+
+        for index, row in data[required_columns].dropna().iterrows():
             source_time = float(row[time_column])
             source_time0 = source_time if source_time0 is None else source_time0
             scope_time = source_time - source_time0
             aligned_time = scope_time - offset
             if aligned_time < 0:
                 continue
+            ch1_voltage = float(row[ch1_column]) * ch1_attenuation
+            ch2_voltage = float(row[ch2_column]) * ch2_attenuation
+            ch3_voltage = (
+                float(row[ch3_column]) * ch3_attenuation if ch3_column is not None else None
+            )
+            if (
+                self._current_mode == self._CURRENT_MODE_SR551_DIFFERENTIAL
+                and ch3_voltage is not None
+            ):
+                current_ma = (
+                    (ch2_voltage - ch3_voltage)
+                    / (self._current_shunt_ohms * self._current_amplifier_gain)
+                    * 1000.0
+                )
+            else:
+                current_ma = ch2_voltage / self._current_shunt_ohms * 1000.0
             rows.append(
                 {
                     "time": aligned_time,
                     "scope_time": scope_time,
-                    "ch1_voltage": float(row[ch1_column]) * ch1_attenuation,
-                    "ch2_voltage": float(row[ch2_column]) * ch2_attenuation,
+                    "ch1_voltage": ch1_voltage,
+                    "ch2_voltage": ch2_voltage,
+                    "ch3_voltage": ch3_voltage,
+                    "current_mA": current_ma,
                     "sample_index": len(rows),
                     "ch1_sample_index": int(index),
                     "ch2_sample_index": int(index),
+                    "ch3_sample_index": int(index) if ch3_column is not None else None,
                 }
             )
 
         if not rows:
             raise RuntimeError("Moku converted CSV has no samples at or after measurement t0")
 
-        return rows, {"time": time_column, "ch1": ch1_column, "ch2": ch2_column}
+        source_columns = {"time": time_column, "ch1": ch1_column, "ch2": ch2_column}
+        if ch3_column is not None:
+            source_columns["ch3"] = ch3_column
+        return rows, source_columns
 
     @staticmethod
     def _read_moku_csv_table(csv_path: Path) -> pd.DataFrame:

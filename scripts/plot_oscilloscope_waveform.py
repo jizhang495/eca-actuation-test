@@ -124,6 +124,8 @@ def read_waveform(csv_path: Path) -> tuple[pd.DataFrame, str, str]:
 
     for column in required_columns:
         data[column] = pd.to_numeric(data[column], errors="coerce")
+    if "current_mA" in data.columns:
+        data["current_mA"] = pd.to_numeric(data["current_mA"], errors="coerce")
 
     data = data.dropna(subset=list(required_columns)).sort_values("time")
     if data.empty:
@@ -204,7 +206,11 @@ def plot_waveform(
     if x_column not in data.columns:
         raise RuntimeError(f"CSV does not contain x-axis column: {x_column}")
 
-    current_ma = data[current_voltage_column] / shunt_ohms * 1000.0
+    current_ma = (
+        data["current_mA"]
+        if "current_mA" in data.columns and data["current_mA"].notna().any()
+        else data[current_voltage_column] / shunt_ohms * 1000.0
+    )
     voltage_x, voltage_y = peak_preserving_downsample(
         data[x_column],
         data[voltage_column],
@@ -258,10 +264,18 @@ def plot_analysis_waveform(
     if bin_ms <= 0:
         raise RuntimeError("--analysis-bin-ms must be greater than 0")
 
-    analysis_data = data[[x_column, voltage_column, current_voltage_column]].copy()
-    analysis_data["current_ma"] = (
-        analysis_data[current_voltage_column] / shunt_ohms * 1000.0
+    current_source_column = (
+        "current_mA"
+        if "current_mA" in data.columns and data["current_mA"].notna().any()
+        else current_voltage_column
     )
+    analysis_data = data[[x_column, voltage_column, current_source_column]].copy()
+    if current_source_column == "current_mA":
+        analysis_data["current_ma"] = analysis_data["current_mA"]
+    else:
+        analysis_data["current_ma"] = (
+            analysis_data[current_voltage_column] / shunt_ohms * 1000.0
+        )
     bin_width_seconds = bin_ms / 1000.0
     x0 = float(analysis_data[x_column].min())
     analysis_data["_bin"] = (

@@ -274,6 +274,9 @@ class MockMokuProDatalogger:
         self._logging_started_at: Optional[float] = None
         self._sample_rate_hz = 1000.0
         self._duration_seconds = 0.0
+        self._current_mode = "raw_ch2_shunt"
+        self._current_shunt_ohms = 330.0
+        self._current_amplifier_gain = 1.0
         self._waveform_generator = {
             "channel": 1,
             "waveform": "Sine",
@@ -308,8 +311,18 @@ class MockMokuProDatalogger:
         self._is_connected = True
         return True
 
-    def configure_voltage_channels(self, sample_rate_hz: float):
+    def configure_voltage_channels(
+        self,
+        sample_rate_hz: float,
+        *,
+        current_mode: str = "raw_ch2_shunt",
+        shunt_ohms: float = 330.0,
+        amplifier_gain: float = 1.0,
+    ):
         self._sample_rate_hz = sample_rate_hz
+        self._current_mode = current_mode
+        self._current_shunt_ohms = shunt_ohms
+        self._current_amplifier_gain = amplifier_gain
 
     def start_logging(
         self,
@@ -373,15 +386,32 @@ class MockMokuProDatalogger:
         rows = []
         for index in range(sample_count):
             t = index * dt
+            ch2_voltage = 0.01 * random.gauss(0, 1.0)
+            ch3_voltage = (
+                ch2_voltage - 0.001 * random.gauss(0.0, 1.0)
+                if self._current_mode == "sr551_differential"
+                else None
+            )
+            if self._current_mode == "sr551_differential" and ch3_voltage is not None:
+                current_ma = (
+                    (ch2_voltage - ch3_voltage)
+                    / (self._current_shunt_ohms * self._current_amplifier_gain)
+                    * 1000.0
+                )
+            else:
+                current_ma = ch2_voltage / self._current_shunt_ohms * 1000.0
             rows.append(
                 {
                     "time": t,
                     "scope_time": t + (t0_offset_seconds or 0.0),
                     "ch1_voltage": 0.2 + random.gauss(0, 0.002),
-                    "ch2_voltage": 0.01 * random.gauss(0, 1.0),
+                    "ch2_voltage": ch2_voltage,
+                    "ch3_voltage": ch3_voltage,
+                    "current_mA": current_ma,
                     "sample_index": index,
                     "ch1_sample_index": index,
                     "ch2_sample_index": index,
+                    "ch3_sample_index": index if ch3_voltage is not None else None,
                 }
             )
         return {
@@ -389,7 +419,10 @@ class MockMokuProDatalogger:
                 "source": "moku",
                 "instrument": "Mock Moku:Pro Data Logger",
                 "probe_attenuation": {"ch1": 10.0, "ch2": 1.0},
-                "frontend_ranges": {"ch1": "400mVpp", "ch2": "400mVpp"},
+                "frontend_ranges": {"ch1": "400mVpp", "ch2": "400mVpp", "ch3": "400mVpp"},
+                "current_mode": self._current_mode,
+                "current_shunt_ohms": self._current_shunt_ohms,
+                "current_amplifier_gain": self._current_amplifier_gain,
                 "voltage_scaling": (
                     "mock rows already use normalized circuit voltage, matching "
                     "the real Moku waveform export"

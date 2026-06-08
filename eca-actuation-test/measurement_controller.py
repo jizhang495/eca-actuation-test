@@ -1,12 +1,14 @@
 """Main measurement controller coordinating all instruments."""
 
 import asyncio
+import json
 import logging
 import math
 import threading
 import time
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 import pyvisa
 
@@ -35,6 +37,10 @@ from api_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+INSTRUMENT_ADDRESS_FILE = REPO_ROOT / "user-data" / "instrument-addresses.json"
+DEFAULT_INSTRUMENT_VALUES = {"", "auto", "default"}
 
 
 class MeasurementController:
@@ -173,6 +179,7 @@ class MeasurementController:
             raise RuntimeError("Measurement already in progress")
 
         logger.info("Starting measurement...")
+        config, address_resolution_events = self._resolve_instrument_addresses(config)
         self._validate_config(config)
         self.runtime_events.clear()
         self.current_config = config.model_copy(deep=True)
@@ -183,6 +190,8 @@ class MeasurementController:
         
         # Save configuration
         self.data_logger.save_config(config.model_dump())
+        for event in address_resolution_events:
+            self._record_event(event)
         self._record_event(
             f"Measurement requested by {control_source}; preparing hardware",
             source=control_source,
@@ -291,6 +300,13 @@ class MeasurementController:
                 "moku_waveform.csv at stop; readings.csv is timing-only "
                 "in Moku mode"
             )
+            if config.moku_current_mode == "sr551_differential":
+                self._record_event(
+                    "Moku current mode: SR551 differential, "
+                    "current_mA = (CH2 - CH3) / "
+                    f"({config.current_amplifier_gain:g} * "
+                    f"{config.current_shunt_ohms:g} ohm) * 1000"
+                )
 
         if config.record_camera:
             camera_start_requested_at = time.perf_counter()
@@ -916,6 +932,114 @@ class MeasurementController:
             return None
         return max(0.0, self._start_monotonic - reference_time)
 
+    def _resolve_instrument_addresses(
+        self,
+        config: MeasurementConfig,
+    ) -> tuple[MeasurementConfig, list[str]]:
+        """Resolve default/auto instrument addresses from the central address file."""
+        address_book = self._load_instrument_address_book()
+        resolved = config.model_copy(deep=True)
+        events: list[str] = []
+
+        fields = (
+            "dmm1_visa_id",
+            "dmm2_visa_id",
+            "oscilloscope_visa_id",
+            "moku_address",
+            "power_supply_visa_id",
+            "relay_port",
+        )
+        inventory: Optional[dict] = None
+
+        for field in fields:
+            current_value = getattr(resolved, field)
+            if not self._uses_default_instrument_value(current_value):
+                continue
+
+            requested = address_book.get(field)
+            if self._uses_default_instrument_value(requested):
+                requested = "auto"
+
+            if inventory is None:
+                inventory = self.list_available_instruments()
+
+            value = self._resolve_single_instrument_address(
+                field,
+                requested,
+                address_book,
+                inventory,
+            )
+            if value:
+                setattr(resolved, field, value)
+                events.append(f"Resolved {field} from instrument-addresses.json: {value}")
+            else:
+                setattr(resolved, field, None)
+
+        return resolved, events
+
+    @staticmethod
+    def _uses_default_instrument_value(value: object) -> bool:
+        if value is None:
+            return True
+        return isinstance(value, str) and value.strip().lower() in DEFAULT_INSTRUMENT_VALUES
+
+    @staticmethod
+    def _load_instrument_address_book() -> dict:
+        if not INSTRUMENT_ADDRESS_FILE.exists():
+            return {}
+        try:
+            data = json.loads(INSTRUMENT_ADDRESS_FILE.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("Failed to read %s: %s", INSTRUMENT_ADDRESS_FILE, exc)
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _resolve_single_instrument_address(
+        self,
+        field: str,
+        requested: object,
+        address_book: dict,
+        inventory: dict,
+    ) -> Optional[str]:
+        if isinstance(requested, str) and requested.strip().lower() not in DEFAULT_INSTRUMENT_VALUES:
+            return requested.strip()
+
+        if field == "moku_address":
+            return self._resolve_moku_address(address_book, inventory)
+        if field == "relay_port":
+            return self._only_or_none(inventory.get("serial_ports") or [])
+        if field == "oscilloscope_visa_id":
+            return self._only_or_none(inventory.get("oscilloscope_resources") or [])
+        if field == "power_supply_visa_id":
+            return self._only_or_none(inventory.get("power_supply_resources") or [])
+        if field in {"dmm1_visa_id", "dmm2_visa_id"}:
+            dmm_resources = inventory.get("dmm_resources") or []
+            index = 0 if field == "dmm1_visa_id" else 1
+            if len(dmm_resources) > index:
+                return dmm_resources[index]
+        return None
+
+    @staticmethod
+    def _resolve_moku_address(address_book: dict, inventory: dict) -> Optional[str]:
+        serial = str(address_book.get("moku_serial") or "").strip()
+        moku_details = [
+            item
+            for item in inventory.get("visa_details", [])
+            if item.get("kind") == "moku"
+        ]
+        if serial:
+            for item in moku_details:
+                idn = str(item.get("idn") or "")
+                if f"serial {serial}" in idn or f"serial, {serial}" in idn or serial in idn:
+                    return item.get("resource")
+
+        resources = inventory.get("moku_resources") or []
+        return MeasurementController._only_or_none(resources)
+
+    @staticmethod
+    def _only_or_none(values: list) -> Optional[str]:
+        return str(values[0]) if len(values) == 1 and values[0] else None
+
     async def _auto_stop_at_elapsed_time(self, stop_after_seconds: float):
         """Stop the run when the configured elapsed time is reached."""
         try:
@@ -1015,7 +1139,12 @@ class MeasurementController:
                     config.moku_address or "MOKU::MOCK::PRO",
                     use_multi_instrument=bool(config.moku_waveform_generator_stages),
                 )
-                self.moku.configure_voltage_channels(config.moku_sample_rate_hz)
+                self.moku.configure_voltage_channels(
+                    config.moku_sample_rate_hz,
+                    current_mode=config.moku_current_mode,
+                    shunt_ohms=config.current_shunt_ohms,
+                    amplifier_gain=config.current_amplifier_gain,
+                )
                 logger.info("Mock Moku:Pro connected")
             else:
                 self.dmm1.connect(config.dmm1_visa_id or "MOCK::DMM::DMM1::INSTR")
@@ -1075,6 +1204,9 @@ class MeasurementController:
                 await asyncio.to_thread(
                     self.moku.configure_voltage_channels,
                     config.moku_sample_rate_hz,
+                    current_mode=config.moku_current_mode,
+                    shunt_ohms=config.current_shunt_ohms,
+                    amplifier_gain=config.current_amplifier_gain,
                 )
                 logger.info("Moku:Pro connected: %s", config.moku_address)
             else:

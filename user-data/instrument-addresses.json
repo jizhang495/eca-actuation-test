@@ -1,0 +1,9 @@
+{
+  "dmm1_visa_id": "auto",
+  "dmm2_visa_id": "auto",
+  "oscilloscope_visa_id": "auto",
+  "moku_address": "auto",
+  "moku_serial": "783",
+  "power_supply_visa_id": "auto",
+  "relay_port": "auto"
+}

@@ -7,6 +7,7 @@ DMMAcquisitionMode = Literal["fast", "low_noise"]
 MeasurementSource = Literal["dmm", "oscilloscope", "moku"]
 ControlSource = Literal["ui", "api", "agent", "script"]
 MokuWaveform = Literal["Sine", "Square", "Ramp", "Pulse"]
+MokuCurrentMode = Literal["raw_ch2_shunt", "sr551_differential"]
 
 
 class VoltageStage(BaseModel):
@@ -59,6 +60,23 @@ class MeasurementConfig(BaseModel):
         description="Moku:Pro Data Logger sample rate in Hz",
         ge=10,
         le=1_000_000,
+    )
+    moku_current_mode: MokuCurrentMode = Field(
+        default="raw_ch2_shunt",
+        description=(
+            "How Moku current is derived: raw CH2 shunt voltage, or SR551 "
+            "balanced outputs on CH2/CH3"
+        ),
+    )
+    current_shunt_ohms: float = Field(
+        default=330.0,
+        description="Current shunt resistance in ohms",
+        gt=0,
+    )
+    current_amplifier_gain: float = Field(
+        default=10.0,
+        description="Voltage gain before Moku current conversion",
+        gt=0,
     )
     dmm_acquisition_mode: DMMAcquisitionMode = Field(
         default="fast",

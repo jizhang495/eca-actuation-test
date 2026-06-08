@@ -26,9 +26,12 @@ OSCILLOSCOPE_WAVEFORM_FIELDNAMES = [
     "scope_time",
     "ch1_voltage",
     "ch2_voltage",
+    "ch3_voltage",
+    "current_mA",
     "sample_index",
     "ch1_sample_index",
     "ch2_sample_index",
+    "ch3_sample_index",
 ]
 
 
@@ -363,9 +366,12 @@ class DataLogger:
                         if ch2 and 0 <= ch2_index < len(ch2_values)
                         else None
                     ),
+                    "ch3_voltage": None,
+                    "current_mA": None,
                     "sample_index": rows_written,
                     "ch1_sample_index": ch1_index if 0 <= ch1_index < len(ch1_values) else None,
                     "ch2_sample_index": ch2_index if 0 <= ch2_index < len(ch2_values) else None,
+                    "ch3_sample_index": None,
                 }
             )
             rows_written += 1

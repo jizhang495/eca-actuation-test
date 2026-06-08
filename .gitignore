@@ -32,6 +32,7 @@ data/*
 eca-actuation-test/data/
 user-data/*
 !user-data/.gitkeep
+!user-data/instrument-addresses.json
 !user-data/experiment-configs/
 !user-data/experiment-configs/*.json
 !user-data/sessions/

@@ -47,6 +47,7 @@ interface DMMReading {
 type ControlSource = "ui" | "api" | "agent" | "script";
 type DmmAcquisitionMode = "fast" | "low_noise";
 type MeasurementSource = "dmm" | "oscilloscope" | "moku";
+type MokuCurrentMode = "raw_ch2_shunt" | "sr551_differential";
 
 interface MeasurementConfig {
   test_name: string;
@@ -63,6 +64,9 @@ interface MeasurementConfig {
   moku_waveform_generator_stages?: MokuWaveformGeneratorStage[];
   sampling_rate_hz: number;
   moku_sample_rate_hz?: number;
+  moku_current_mode?: MokuCurrentMode;
+  current_shunt_ohms?: number;
+  current_amplifier_gain?: number;
   dmm_acquisition_mode?: DmmAcquisitionMode;
   stop_after_seconds?: number | null;
   record_camera: boolean;
@@ -256,6 +260,10 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
 
   const dmmAcquisitionMode =
     configValue.dmm_acquisition_mode === "low_noise" ? "low_noise" : "fast";
+  const mokuCurrentMode =
+    configValue.moku_current_mode === "sr551_differential"
+      ? "sr551_differential"
+      : "raw_ch2_shunt";
   const measurementSource =
     configValue.measurement_source === "dmm"
       ? "dmm"
@@ -291,6 +299,13 @@ const normalizeLoadedConfig = (value: unknown): MeasurementConfig => {
       10000,
       "moku_sample_rate_hz"
     ),
+    moku_current_mode: mokuCurrentMode,
+    current_shunt_ohms: readNumber(configValue.current_shunt_ohms, 330, "current_shunt_ohms"),
+    current_amplifier_gain: readNumber(
+      configValue.current_amplifier_gain,
+      10,
+      "current_amplifier_gain"
+    ),
     dmm_acquisition_mode: dmmAcquisitionMode,
     stop_after_seconds: stopAfterSeconds,
     record_camera: readBoolean(configValue.record_camera, false, "record_camera"),
@@ -324,10 +339,14 @@ function VisaSelectControl({
   onChange,
   disabled = false,
 }: VisaSelectControlProps) {
+  const defaultResource = {
+    resource: "default",
+    label: "Default from instrument-addresses.json",
+  };
   const selectResources =
-    value && !resources.some((resource) => resource.resource === value)
-      ? [{ resource: value, label: value }, ...resources]
-      : resources;
+    value && !resources.some((resource) => resource.resource === value) && value !== "default"
+      ? [defaultResource, { resource: value, label: value }, ...resources]
+      : [defaultResource, ...resources];
 
   return (
     <div className="min-w-0 space-y-1.5">
@@ -450,6 +469,10 @@ export default function Home() {
   const [testName, setTestName] = useState("test");
   const [samplingRate, setSamplingRate] = useState(10);
   const [mokuSampleRate, setMokuSampleRate] = useState(10000);
+  const [mokuCurrentMode, setMokuCurrentMode] =
+    useState<MokuCurrentMode>("raw_ch2_shunt");
+  const [currentShuntOhms, setCurrentShuntOhms] = useState(330);
+  const [currentAmplifierGain, setCurrentAmplifierGain] = useState(10);
   const [dmmAcquisitionMode, setDmmAcquisitionMode] =
     useState<DmmAcquisitionMode>("fast");
   const [stopAtEnabled, setStopAtEnabled] = useState(false);
@@ -546,6 +569,9 @@ export default function Home() {
     setMokuWaveformGeneratorStages(config.moku_waveform_generator_stages || []);
     setSamplingRate(config.sampling_rate_hz || 10);
     setMokuSampleRate(config.moku_sample_rate_hz || 10000);
+    setMokuCurrentMode(config.moku_current_mode || "raw_ch2_shunt");
+    setCurrentShuntOhms(config.current_shunt_ohms || 330);
+    setCurrentAmplifierGain(config.current_amplifier_gain || 10);
     setDmmAcquisitionMode(config.dmm_acquisition_mode || "fast");
     setStopAtEnabled(
       typeof config.stop_after_seconds === "number" &&
@@ -795,16 +821,6 @@ export default function Home() {
       return null;
     }
 
-    if (measurementSource === "oscilloscope" && !oscilloscopeVisa) {
-      alert("Add an oscilloscope VISA ID before using oscilloscope mode.");
-      return null;
-    }
-
-    if (measurementSource === "moku" && !mokuAddress) {
-      alert("Add a Moku:Pro address before using Moku mode.");
-      return null;
-    }
-
     if (
       measurementSource === "moku" &&
       (!Number.isFinite(mokuSampleRate) || mokuSampleRate < 10)
@@ -817,13 +833,18 @@ export default function Home() {
       return null;
     }
 
-    if (voltageStages.length > 0 && !powerSupplyVisa) {
-      alert("Add a power supply VISA ID before using power supply stages.");
+    if (
+      measurementSource === "moku" &&
+      (!Number.isFinite(currentShuntOhms) || currentShuntOhms <= 0)
+    ) {
+      alert("Current shunt resistance must be greater than 0 ohm.");
       return null;
     }
-
-    if ((relayCh1Stages.length > 0 || relayCh2Stages.length > 0) && !relayPort) {
-      alert("Add a relay board serial port before using relay stages.");
+    if (
+      measurementSource === "moku" &&
+      (!Number.isFinite(currentAmplifierGain) || currentAmplifierGain <= 0)
+    ) {
+      alert("Current amplifier gain must be greater than 0.");
       return null;
     }
 
@@ -922,6 +943,9 @@ export default function Home() {
         measurementSource === "moku" ? normalizedMokuWaveformGeneratorStages : [],
       sampling_rate_hz: measurementSource === "moku" ? 10 : samplingRate,
       moku_sample_rate_hz: mokuSampleRate,
+      moku_current_mode: mokuCurrentMode,
+      current_shunt_ohms: currentShuntOhms,
+      current_amplifier_gain: currentAmplifierGain,
       dmm_acquisition_mode: dmmAcquisitionMode,
       stop_after_seconds: stopAtEnabled ? stopAfterSeconds : null,
       record_camera: recordCamera,
@@ -931,11 +955,14 @@ export default function Home() {
   }, [
     autoDownloadCameraRecording,
     cameraReadyDelaySeconds,
+    currentAmplifierGain,
+    currentShuntOhms,
     dmm1Visa,
     dmm2Visa,
     dmmAcquisitionMode,
     measurementSource,
     mokuAddress,
+    mokuCurrentMode,
     mokuSampleRate,
     mokuWaveformGeneratorStages,
     oscilloscopeVisa,
@@ -1314,19 +1341,85 @@ export default function Home() {
                           </SelectContent>
                         </Select>
                       </div>
+                    ) : measurementSource === "moku" ? (
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="moku-current-mode"
+                          className="text-xs uppercase tracking-wide text-muted-foreground"
+                        >
+                          Current Mode
+                        </Label>
+                        <Select
+                          value={mokuCurrentMode}
+                          onValueChange={(value) =>
+                            setMokuCurrentMode(value as MokuCurrentMode)
+                          }
+                          disabled={isMeasuring || isStarting}
+                        >
+                          <SelectTrigger id="moku-current-mode" className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="raw_ch2_shunt">Raw CH2 shunt</SelectItem>
+                            <SelectItem value="sr551_differential">SR551 CH2-CH3</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     ) : null}
                   </div>
                 ) : null}
                 {measurementSource === "moku" ? (
-                  <div className="space-y-1.5">
-                    <p className="text-xs font-medium uppercase leading-none tracking-wide text-muted-foreground">
-                      Waveform Generator
-                    </p>
-                    <MokuWaveformGeneratorConfigurator
-                      stages={mokuWaveformGeneratorStages}
-                      onStagesChange={setMokuWaveformGeneratorStages}
-                      disabled={isMeasuring || isStarting}
-                    />
+                  <div className="space-y-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="current-shunt-ohms"
+                          className="text-xs uppercase tracking-wide text-muted-foreground"
+                        >
+                          Shunt (ohm)
+                        </Label>
+                        <Input
+                          id="current-shunt-ohms"
+                          type="number"
+                          value={currentShuntOhms}
+                          onChange={(e) => setCurrentShuntOhms(parseFloat(e.target.value) || 330)}
+                          disabled={isMeasuring || isStarting}
+                          min={0.001}
+                          step={0.001}
+                          className="h-9"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="current-amplifier-gain"
+                          className="text-xs uppercase tracking-wide text-muted-foreground"
+                        >
+                          Gain
+                        </Label>
+                        <Input
+                          id="current-amplifier-gain"
+                          type="number"
+                          value={currentAmplifierGain}
+                          onChange={(e) =>
+                            setCurrentAmplifierGain(parseFloat(e.target.value) || 1)
+                          }
+                          disabled={isMeasuring || isStarting}
+                          min={0.001}
+                          step={0.001}
+                          className="h-9"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium uppercase leading-none tracking-wide text-muted-foreground">
+                        Waveform Generator
+                      </p>
+                      <MokuWaveformGeneratorConfigurator
+                        stages={mokuWaveformGeneratorStages}
+                        onStagesChange={setMokuWaveformGeneratorStages}
+                        disabled={isMeasuring || isStarting}
+                      />
+                    </div>
                   </div>
                 ) : null}
               </CardContent>
