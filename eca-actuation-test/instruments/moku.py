@@ -703,6 +703,10 @@ class MokuProDatalogger:
             "offset": 0.0,
             "strict": False,
         }
+        if waveform_type == "Square":
+            params["duty"] = 50.0
+        elif waveform_type == "Ramp":
+            params["symmetry"] = 50.0
         generator = (
             self._require_waveform_generator()
             if self._use_multi_instrument
