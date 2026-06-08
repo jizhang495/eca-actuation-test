@@ -147,7 +147,7 @@ The app lists discovered Moku devices as `MOKU::...` resources. If the Moku is U
 
 Moku presets use `sampling_rate_hz` for the app's lightweight timing loop and `moku_sample_rate_hz` for the actual Data Logger file rate. The current Moku API command path accepts `moku_sample_rate_hz` from 10 Sa/s to 1 MSa/s; the 750 s preset uses 10 kSa/s.
 
-The Moku wiring convention is CH1 applied voltage through a 10x probe and CH2 shunt voltage through 1x. The app configures both Moku inputs for `400mVpp` frontend range, then multiplies raw Input 1 values by 10 when writing `moku_waveform.csv`. `ch1_voltage` is therefore circuit voltage. `ch2_voltage` remains the 1x shunt voltage used for current conversion.
+The Moku wiring convention is CH1 applied voltage through a 10x probe. In raw shunt mode, CH2 measures shunt voltage through 1x. The app configures Moku inputs for `400mVpp` frontend range, then multiplies raw Input 1 values by 10 when writing `moku_waveform.csv`. `ch1_voltage` is therefore circuit voltage. In raw shunt mode, `ch2_voltage` remains the 1x shunt voltage used for current conversion.
 
 Moku mode can also schedule Waveform Generator Output 1 stages. When stages are present, the backend uses Moku Multi-Instrument Mode with Data Logger in slot 1, Waveform Generator in slot 2, and `Slot2OutA -> Output1`. This is required for output stages that turn on or off while CH1/CH2 file logging is active. Moku runs without waveform stages use the simpler Data Logger instrument. The UI shows the stage editor only in Moku mode, and saved JSON uses:
 
@@ -179,9 +179,11 @@ The SR551 output is always a balanced differential signal, so the app computes c
 For the SR551 input side:
 
 ```text
-Single-ended input: SR551 input A -> shunt high side, input selector -> A
-Differential input: SR551 input A -> shunt high side, input B -> shunt low side / ground, input selector -> A-B
+Single-ended input: shunt high side -> direct/1x -> SR551 input A, input selector -> A
+Differential input: shunt high side -> direct/1x -> SR551 input A, shunt low side / ground -> SR551 input B, input selector -> A-B
 ```
+
+Use direct/1x coax or a 1x probe on the SR551 input. Do not use a 10x passive probe between the shunt and SR551 input A; that attenuates the small shunt signal before the SR551 gain and may not compensate correctly into the SR551 high-impedance input.
 
 If the shunt low side is circuit ground, single-ended `A` mode is acceptable. Do not leave SR551 input B floating when the SR551 input selector is in `A-B` mode. The Moku config should use:
 
