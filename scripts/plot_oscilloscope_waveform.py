@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -353,6 +355,61 @@ def plot_analysis_waveform(
     plt.close(fig)
 
 
+def _frontend_range_half_volts(range_str: object) -> float | None:
+    """Half of a Moku frontend range like '400mVpp' -> 0.2 V; None if unparseable."""
+    match = re.match(
+        r"\s*([-+]?\d+(?:\.\d+)?)\s*([munp]?)Vpp\s*$", str(range_str), re.IGNORECASE
+    )
+    if not match:
+        return None
+    scale = {"": 1.0, "m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12}
+    return float(match.group(1)) * scale[match.group(2).lower()] / 2.0
+
+
+def report_clipping(csv_path: Path, data: pd.DataFrame, tolerance: float = 0.01) -> None:
+    """Warn on stderr if any Moku input channel reached its frontend-range rail.
+
+    Uses the sibling <stem>_metadata.json (frontend ranges + probe attenuations).
+    Does nothing for CSVs without that metadata, e.g. oscilloscope/DMM records.
+    """
+    metadata_path = csv_path.with_name(f"{csv_path.stem}_metadata.json")
+    if not metadata_path.exists():
+        return
+    try:
+        metadata = json.loads(metadata_path.read_text())
+    except (OSError, ValueError):
+        return
+    ranges = metadata.get("frontend_ranges") or {}
+    attenuations = metadata.get("probe_attenuation") or {}
+    if not ranges:
+        return
+
+    any_clipped = False
+    for channel in ("ch1", "ch2", "ch3"):
+        column = f"{channel}_voltage"
+        rail_volts = _frontend_range_half_volts(ranges.get(channel))
+        if column not in data.columns or rail_volts is None:
+            continue
+        attenuation = float(attenuations.get(channel, 1.0)) or 1.0
+        series = pd.to_numeric(data[column], errors="coerce").dropna()
+        if series.empty:
+            continue
+        input_referred = series.abs() / attenuation
+        clipped = int((input_referred >= rail_volts * (1.0 - tolerance)).sum())
+        if clipped:
+            any_clipped = True
+            percent = 100.0 * clipped / len(series)
+            print(
+                f"WARNING: {channel} clipping - {clipped} samples ({percent:.2f}%) at/over the "
+                f"{ranges.get(channel)} rail (+/-{rail_volts:g} V at the Moku input, "
+                f"+/-{rail_volts * attenuation:g} V in CSV units). "
+                "Reduce amplifier gain or drive amplitude.",
+                file=sys.stderr,
+            )
+    if not any_clipped:
+        print("Clipping check: no channel reached the Moku input rail.", file=sys.stderr)
+
+
 def main() -> int:
     args = parse_args()
     output_path = args.output or default_output_path(args.csv_path)
@@ -360,6 +417,7 @@ def main() -> int:
     try:
         validate_input(args.csv_path, args.shunt_ohms)
         data, voltage_column, current_voltage_column = read_waveform(args.csv_path)
+        report_clipping(args.csv_path, data)
         data = filter_x_range(data, args.x_column, args.x_min, args.x_max)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         plot_waveform(

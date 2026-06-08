@@ -521,6 +521,7 @@ class MokuProDatalogger:
                 "current_shunt_ohms": self._current_shunt_ohms,
                 "current_amplifier_gain": self._current_amplifier_gain,
                 "current_scaling": self._current_scaling_description(),
+                "clipping": self._compute_clipping_report(rows),
                 "voltage_scaling": (
                     "moku_waveform.csv stores circuit voltage; raw Moku input "
                     "columns are multiplied by the configured probe attenuation"
@@ -559,6 +560,65 @@ class MokuProDatalogger:
                 "CH2 and CH3 are the two SR551 balanced output legs"
             )
         return "current_mA = ch2_voltage / current_shunt_ohms * 1000"
+
+    def _compute_clipping_report(self, rows: list[dict], tolerance: float = 0.01) -> dict:
+        """Flag how close each input got to its frontend-range rail.
+
+        A Moku input clips at +/-(frontend_range / 2). The CSV stores
+        probe-attenuation-scaled voltages, so each sample is referred back to the
+        raw input (value / attenuation) before comparing against the rail.
+        """
+        channel_meta = {
+            "ch1": (self._CH1_FRONTEND_RANGE, self._CH1_PROBE_ATTENUATION),
+            "ch2": (self._CH2_FRONTEND_RANGE, self._CH2_PROBE_ATTENUATION),
+            "ch3": (self._CH3_FRONTEND_RANGE, self._CH3_PROBE_ATTENUATION),
+        }
+        channels: dict[str, dict] = {}
+        any_clipped = False
+        for channel, (frontend_range, attenuation) in channel_meta.items():
+            column = f"{channel}_voltage"
+            input_referred = [
+                abs(row[column]) / attenuation
+                for row in rows
+                if row.get(column) is not None
+            ]
+            if not input_referred:
+                continue
+            rail_volts = self._frontend_range_half_volts(frontend_range)
+            threshold = rail_volts * (1.0 - tolerance)
+            clipped = sum(1 for value in input_referred if value >= threshold)
+            channel_clipped = clipped > 0
+            any_clipped = any_clipped or channel_clipped
+            channels[channel] = {
+                "clipped": channel_clipped,
+                "clipped_samples": clipped,
+                "total_samples": len(input_referred),
+                "clipped_fraction": clipped / len(input_referred),
+                "max_abs_input_volts": max(input_referred),
+                "rail_volts": rail_volts,
+                "frontend_range": frontend_range,
+                "probe_attenuation": attenuation,
+            }
+        return {
+            "tolerance_fraction": tolerance,
+            "any_clipped": any_clipped,
+            "rail_definition": (
+                "rail = frontend_range / 2 at the Moku input; a sample clips when "
+                "|raw input| >= rail * (1 - tolerance_fraction)"
+            ),
+            "channels": channels,
+        }
+
+    @staticmethod
+    def _frontend_range_half_volts(range_str: str) -> float:
+        match = re.match(
+            r"\s*([-+]?\d+(?:\.\d+)?)\s*([munp]?)Vpp\s*$", str(range_str), re.IGNORECASE
+        )
+        if not match:
+            raise ValueError(f"Unrecognized Moku frontend range: {range_str}")
+        scale = {"": 1.0, "m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12}
+        vpp = float(match.group(1)) * scale[match.group(2).lower()]
+        return vpp / 2.0
 
     def _physical_to_command_vpp(self, physical_vpp: float) -> float:
         if self._use_multi_instrument:

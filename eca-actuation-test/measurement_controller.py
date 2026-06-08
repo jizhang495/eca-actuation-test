@@ -819,6 +819,7 @@ class MeasurementController:
             if csv_path:
                 self._record_event(f"Moku:Pro waveform saved to {csv_path.name}")
                 self._record_moku_waveform_coverage(waveform)
+                self._record_moku_clipping(waveform.get("metadata"))
         except Exception as e:
             logger.error("Failed to save Moku:Pro waveform: %s", e)
             self._record_event(f"Moku:Pro waveform export failed: {e}", kind="error")
@@ -899,6 +900,27 @@ class MeasurementController:
             f"Moku:Pro waveform export covers {coverage_seconds:.6g} s "
             f"from t={start_time:.6g} s to t={end_time:.6g} s"
         )
+
+    def _record_moku_clipping(self, metadata: Optional[dict]) -> None:
+        """Warn in the runtime log when a Moku input reached its frontend rail."""
+        clipping = (metadata or {}).get("clipping") or {}
+        if not clipping.get("any_clipped"):
+            return
+        parts = []
+        for channel, info in (clipping.get("channels") or {}).items():
+            if info.get("clipped"):
+                parts.append(
+                    f"{channel} {info['clipped_samples']} sample(s) "
+                    f"({info['clipped_fraction'] * 100:.2f}%, peak "
+                    f"{info['max_abs_input_volts']:.4g} V vs {info['rail_volts']:g} V rail)"
+                )
+        if parts:
+            self._record_event(
+                "Moku input clipping at the frontend rail: "
+                + "; ".join(parts)
+                + ". Reduce amplifier gain or drive amplitude.",
+                kind="warning",
+            )
 
     def _record_moku_start_timing(self) -> None:
         request_time = getattr(self.moku, "last_logging_start_request_monotonic", None)
