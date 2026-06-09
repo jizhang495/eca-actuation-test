@@ -140,7 +140,7 @@ def make_config(
         "dmm_acquisition_mode": "low_noise",
         "stop_after_seconds": end,
         "record_camera": record_camera,
-        "auto_download_camera_recording": record_camera,
+        "auto_download_camera_recording": False,
         "camera_ready_delay_seconds": 2.0,
     }
 

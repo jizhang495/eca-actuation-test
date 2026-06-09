@@ -66,8 +66,9 @@ At stop:
 2. Voltage and relay control tasks are cancelled.
 3. DMM/readings logging is finalized.
 4. Oscilloscope or Moku waveforms are exported when in those high-rate modes.
-5. Instruments are disconnected.
-6. If auto-download is enabled for a camera run, the post-run video transfer task starts after the measurement has fully stopped.
+5. If camera recording was enabled and auto-download is off, the app records the newest camera movie reference in the session folder.
+6. Instruments are disconnected.
+7. If auto-download is enabled for a camera run, the post-run video transfer task starts after the measurement has fully stopped.
 
 ## Sync Acceptance
 
@@ -242,7 +243,15 @@ At run start, the backend resolves missing/default addresses through live discov
 
 ## Camera And Video Output
 
-The camera records to its SD card. After the run, the download helper releases the camera service session, finds the newest movie on the camera, stores the raw camera movie in:
+The camera records to its SD card. By default, presets do not auto-download the video. After a camera run with `auto_download_camera_recording: false`, the app releases the camera service session, identifies the newest movie on the camera, appends the filename to `log.txt`, and writes:
+
+```text
+user-data/sessions/<session>/camera_recording_reference.json
+```
+
+Use this filename later when manually copying the movie from the SD card into the session folder.
+
+Manual video transfer can still use the download helper. It releases the camera service session, finds the newest movie on the camera, stores the raw camera movie in:
 
 ```text
 user-data/big-videos/
@@ -262,7 +271,7 @@ Manual conversion of existing MOV files:
 uv run python3 scripts/convert_mov_to_mp4.py user-data/sessions/<session> --crf 22
 ```
 
-Auto-download runs only when both of these config fields are true:
+Auto-download is still available, but is no longer enabled in the saved presets. It runs only when both of these config fields are true:
 
 ```json
 {
@@ -271,7 +280,7 @@ Auto-download runs only when both of these config fields are true:
 }
 ```
 
-The full-run presets in `user-data/experiment-configs/` and sweep presets in `user-data/experiment-configs/sweeps/` enable both fields where camera recording is intended.
+The full-run presets in `user-data/experiment-configs/` and sweep presets in `user-data/experiment-configs/sweeps/` keep `auto_download_camera_recording` false and rely on the camera reference file for manual SD-card transfer.
 
 ## Session Outputs
 
@@ -284,6 +293,7 @@ user-data/sessions/<timestamp>_<test_name>/
   readings.csv
   config.json
   log.txt
+  camera_recording_reference.json  # if camera recorded and auto-download was off
   <camera>.mp4                 # if video was downloaded/converted
 ```
 
@@ -296,6 +306,7 @@ user-data/sessions/<timestamp>_<test_name>/
   oscilloscope_waveform_metadata.json
   config.json
   log.txt
+  camera_recording_reference.json  # if camera recorded and auto-download was off
   <camera>.mp4                 # if video was downloaded/converted
 ```
 
@@ -328,4 +339,4 @@ user-data/big-videos/<camera-file>.MOV.json
 - `scope_0p2v_relay2_single_pulse_test.json`: short oscilloscope/relay test preset.
 - `moku_0p2v_relay2_single_pulse_<rate>.json`: short Moku rate/noise test presets at 1, 2, 5, and 10 kSa/s.
 
-The full-run presets currently use camera recording, auto-stop at 750 s, and auto-download/compress after the run.
+The full-run presets currently use camera recording and auto-stop at 750 s. They keep auto-download off, so the session log and `camera_recording_reference.json` identify the camera file for later SD-card copy.

@@ -150,10 +150,11 @@ user-data/sessions/2025-10-13_14-30-15_test1/
 ├── moku_waveform_metadata.json           # Moku export metadata
 ├── config.json                          # Test configuration
 ├── log.txt                              # Session log and timing events
-└── <camera-file>.mp4                    # Downloaded/compressed camera video
+├── camera_recording_reference.json       # Camera filename for manual SD-card copy
+└── <camera-file>.mp4                    # If downloaded/compressed later
 ```
 
-Raw camera movies are stored under `user-data/big-videos/`. Converted MP4s are stored in the session folder.
+With auto-download off, camera runs record the camera filename in `log.txt` and `camera_recording_reference.json` for manual SD-card copy. Raw camera movies are stored under `user-data/big-videos/` only when downloaded through the helper. Converted MP4s are stored in the session folder.
 
 ## Troubleshooting
 

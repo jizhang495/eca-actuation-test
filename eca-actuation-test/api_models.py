@@ -104,7 +104,10 @@ class MeasurementConfig(BaseModel):
     record_camera: bool = Field(default=False, description="Start camera recording with measurement")
     auto_download_camera_recording: bool = Field(
         default=False,
-        description="Download the camera recording and convert it after measurement",
+        description=(
+            "Download and convert the camera recording after measurement. "
+            "When false, camera runs record only a session-local filename reference."
+        ),
     )
     camera_ready_delay_seconds: float = Field(
         default=1.0,
@@ -167,6 +170,7 @@ class StopMeasurementResponse(BaseModel):
     oscilloscope_metadata_path: Optional[str] = None
     moku_csv_path: Optional[str] = None
     moku_metadata_path: Optional[str] = None
+    camera_reference_path: Optional[str] = None
 
 
 class InstrumentStatus(BaseModel):

@@ -67,10 +67,11 @@ user-data/sessions/<timestamp>_<test_name>/
   moku_waveform_metadata.json
   oscilloscope_waveform.svg
   oscilloscope_waveform_analysis.svg
+  camera_recording_reference.json
   <camera-recording>.mp4
 ```
 
-Not every run creates every file. DMM-only runs do not create oscilloscope waveform files. Runs without camera recording do not create video files. Raw camera movies are stored outside session folders under `user-data/big-videos/`; converted MP4s are stored in the session folder using H.264 CRF 22.
+Not every run creates every file. DMM-only runs do not create oscilloscope waveform files. Runs without camera recording do not create video files. With auto-download off, camera runs write `camera_recording_reference.json` and a `log.txt` entry naming the camera movie for later SD-card copy. Raw camera movies are stored outside session folders under `user-data/big-videos/` only when downloaded through the helper; converted MP4s are stored in the session folder using H.264 CRF 22.
 
 ## Documentation
 

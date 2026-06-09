@@ -57,6 +57,7 @@ The browser is a monitor and operator console. It must not be the only way to ru
 
 - Camera recording is optional per config through `record_camera`.
 - If `record_camera` and `auto_download_camera_recording` are both true, the app should download and compress video after the run.
+- If `record_camera` is true and `auto_download_camera_recording` is false, the app should record the newest camera movie name in `log.txt` and `camera_recording_reference.json` for manual SD-card copy.
 - Raw camera movies are stored under `user-data/big-videos/`.
 - Converted MP4 files are stored in the session folder and encoded with H.264 CRF 22.
 - The manual `Download & Convert` control should use the same conversion path as auto-download.

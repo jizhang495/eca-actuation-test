@@ -80,9 +80,20 @@ The service will automatically detect the executable and use it.
 
 ## Downloading the Latest Recording
 
-Video files are saved on the camera SD card. After a measurement has stopped,
-download the newest movie into `user-data/big-videos/` and create a CRF 22
-H.264 MP4 in the target session folder:
+Video files are saved on the camera SD card. With the current presets,
+auto-download is off. After a camera run, the app records the newest camera
+movie name in the session folder without copying the file:
+
+```text
+user-data/sessions/<session>/camera_recording_reference.json
+user-data/sessions/<session>/log.txt
+```
+
+Use that filename when copying the movie manually from the SD card.
+
+To download through the app instead, run the helper after the measurement has
+stopped. It downloads the newest movie into `user-data/big-videos/` and creates
+a CRF 22 H.264 MP4 in the target session folder:
 
 ```bash
 uv run python3 scripts/download_latest_camera_recording.py --session-dir user-data/sessions/<session>
@@ -101,7 +112,9 @@ GET /api/download_latest_camera_recording/status
 ```
 
 For config-driven auto-download, both `record_camera` and
-`auto_download_camera_recording` must be true.
+`auto_download_camera_recording` must be true. Saved presets currently keep
+`auto_download_camera_recording` false so runs only record the camera filename
+reference.
 
 ## Port
 

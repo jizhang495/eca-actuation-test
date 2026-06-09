@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import math
+import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -40,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTRUMENT_ADDRESS_FILE = REPO_ROOT / "user-data" / "instrument-addresses.json"
+CAMERA_REFERENCE_SCRIPT = REPO_ROOT / "scripts" / "record_latest_camera_reference.py"
 DEFAULT_INSTRUMENT_VALUES = {"", "auto", "default"}
 MAX_MOKU_WAVEFORM_VPP = 2.0
 
@@ -154,6 +157,7 @@ class MeasurementController:
         self._oscilloscope_waveform_metadata_path: Optional[str] = None
         self._moku_waveform_csv_path: Optional[str] = None
         self._moku_waveform_metadata_path: Optional[str] = None
+        self._camera_reference_path: Optional[str] = None
         self._record_camera_for_session = False
         self._relay_stage_tasks: list[asyncio.Task] = []
         self._relay_lock = asyncio.Lock()
@@ -284,6 +288,7 @@ class MeasurementController:
         self._moku_waveform_csv_path = None
         self._moku_waveform_metadata_path = None
         self._moku_stop_elapsed = None
+        self._camera_reference_path = None
         self._record_event("Measurement t0")
         self._record_event(f"Measurement source: {config.measurement_source}")
         if config.measurement_source == "dmm":
@@ -741,6 +746,13 @@ class MeasurementController:
         ):
             await self._save_moku_waveform(self._moku_stop_elapsed)
 
+        if (
+            self.current_config
+            and self.current_config.record_camera
+            and not self.current_config.auto_download_camera_recording
+        ):
+            await self._record_camera_reference()
+
         # Disconnect instruments
         self._disconnect_instruments()
 
@@ -756,6 +768,7 @@ class MeasurementController:
             "oscilloscope_metadata_path": self._oscilloscope_waveform_metadata_path,
             "moku_csv_path": self._moku_waveform_csv_path,
             "moku_metadata_path": self._moku_waveform_metadata_path,
+            "camera_reference_path": self._camera_reference_path,
         }
 
         self._record_event("Measurement stopped", source=control_source)
@@ -774,6 +787,62 @@ class MeasurementController:
         self._is_stopping = False
 
         return response
+
+    async def _record_camera_reference(self):
+        """Record the newest camera movie name for manual SD-card transfer."""
+        try:
+            session_dir = self.data_logger.current_session_dir
+            if not session_dir:
+                raise RuntimeError("No active session directory for camera reference")
+            if not CAMERA_REFERENCE_SCRIPT.exists():
+                raise RuntimeError("Camera reference helper script is missing")
+
+            command = [
+                sys.executable,
+                str(CAMERA_REFERENCE_SCRIPT),
+                "--session-dir",
+                str(session_dir),
+            ]
+            result = await asyncio.to_thread(
+                subprocess.run,
+                command,
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if result.returncode != 0:
+                detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+                self._record_event(
+                    f"Camera recording reference lookup failed: {detail}",
+                    kind="warning",
+                )
+                return
+
+            reference_path = session_dir / "camera_recording_reference.json"
+            self._camera_reference_path = str(reference_path) if reference_path.exists() else None
+            camera_file_name = self._parse_reference_output(result.stdout, "Camera file name")
+            if camera_file_name:
+                self._record_event(
+                    f"Camera recording reference saved: {camera_file_name}",
+                    log=False,
+                )
+            else:
+                self._record_event("Camera recording reference saved", log=False)
+        except subprocess.TimeoutExpired:
+            self._record_event("Camera recording reference lookup timed out", kind="warning")
+        except Exception as e:
+            logger.error("Failed to record camera reference: %s", e)
+            self._record_event(f"Camera recording reference lookup failed: {e}", kind="warning")
+
+    @staticmethod
+    def _parse_reference_output(stdout: str, key: str) -> Optional[str]:
+        for line in stdout.splitlines():
+            found_key, separator, value = line.partition(": ")
+            if separator and found_key == key:
+                return value.strip()
+        return None
 
     async def _save_oscilloscope_waveform(self, stop_elapsed_seconds: Optional[float]):
         """Export the stopped oscilloscope record into the current session."""
