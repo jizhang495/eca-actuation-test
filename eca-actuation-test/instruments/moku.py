@@ -51,6 +51,9 @@ class MokuProDatalogger:
     _CURRENT_MODE_SR551_DIFFERENTIAL = "sr551_differential"
     _SETTING_COMMAND_READ_TIMEOUT_SECONDS = 2.0
     _WAVEFORM_COMMAND_READ_TIMEOUT_SECONDS = 0.5
+    # The .li download crosses the (sometimes flaky) link to the Moku; retry it.
+    _CAPTURE_DOWNLOAD_ATTEMPTS = 3
+    _CAPTURE_DOWNLOAD_BACKOFF_SECONDS = (3.0, 8.0)
     _MIM_PLATFORM_ID = 4
     _MIM_OUTPUT_GAIN = "0dB"
     _MAX_PHYSICAL_OUTPUT_VPP = 2.0
@@ -500,23 +503,46 @@ class MokuProDatalogger:
         if not self._log_file_name:
             raise RuntimeError("Moku:Pro did not report a log file name")
 
-        self._run_cli(
-            [
-                "files",
-                "download",
-                self.moku_address,
-                "--name",
-                self._log_file_name,
-                "--force",
-            ],
-            cwd=session_dir,
-            timeout=300,
-        )
         raw_path = session_dir / self._log_file_name
-        self._run_cli(["convert", str(raw_path), "--format", "csv"], cwd=session_dir, timeout=300)
         converted_path = raw_path.with_suffix(".csv")
-        if not converted_path.exists():
-            raise RuntimeError(f"Moku conversion did not create CSV: {converted_path}")
+        # Retry the download+convert: a transient link drop mid-transfer must not
+        # cost a finished run's data. --force re-fetches a complete .li each try.
+        for attempt in range(1, self._CAPTURE_DOWNLOAD_ATTEMPTS + 1):
+            try:
+                self._run_cli(
+                    [
+                        "files",
+                        "download",
+                        self.moku_address,
+                        "--name",
+                        self._log_file_name,
+                        "--force",
+                    ],
+                    cwd=session_dir,
+                    timeout=300,
+                )
+                self._run_cli(
+                    ["convert", str(raw_path), "--format", "csv"],
+                    cwd=session_dir,
+                    timeout=300,
+                )
+                if not converted_path.exists():
+                    raise MokuCliError(f"Moku conversion did not create CSV: {converted_path}")
+                break
+            except (MokuCliError, subprocess.TimeoutExpired) as exc:
+                if attempt >= self._CAPTURE_DOWNLOAD_ATTEMPTS:
+                    raise
+                delay = self._CAPTURE_DOWNLOAD_BACKOFF_SECONDS[
+                    min(attempt - 1, len(self._CAPTURE_DOWNLOAD_BACKOFF_SECONDS) - 1)
+                ]
+                logger.warning(
+                    "Moku .li download/convert failed (attempt %d/%d): %s; retrying in %.0f s",
+                    attempt,
+                    self._CAPTURE_DOWNLOAD_ATTEMPTS,
+                    exc,
+                    delay,
+                )
+                time.sleep(delay)
 
         rows, source_columns = self._read_converted_csv(converted_path, t0_offset_seconds)
         return {
@@ -1031,25 +1057,43 @@ class MokuProDatalogger:
                 return line
         raise RuntimeError("Moku summary did not include acquisition settings")
 
-    @staticmethod
-    def _parse_summary_quantity(value: str) -> Optional[float]:
+    # SI prefix multipliers. Case-sensitive: 'm' is milli and 'M' is mega, which
+    # both lowercase to "m" -- the Moku reports low frequencies as e.g. "100 mHz".
+    _SI_PREFIX_MULTIPLIERS = {
+        "": 1.0,
+        "k": 1e3,
+        "M": 1e6,
+        "G": 1e9,
+        "m": 1e-3,
+        "u": 1e-6,
+        "µ": 1e-6,
+        "n": 1e-9,
+        "p": 1e-12,
+    }
+
+    @classmethod
+    def _parse_summary_quantity(cls, value: str) -> Optional[float]:
         compact = re.sub(r"(?<=\d)\s+(?=\d)", "", value.strip())
-        match = re.match(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-z]+)", compact)
+        match = re.match(r"([-+]?\d+(?:\.\d+)?)\s*([A-Za-zµ]+)", compact)
         if not match:
             return None
 
         number = float(match.group(1))
-        unit = match.group(2).lower()
-        if unit in {"hz", "vpp", "v"}:
-            return number
-        if unit in {"khz", "kvpp", "kv"}:
-            return number * 1_000
-        if unit in {"mhz", "mvpp", "mv"}:
-            multiplier = 1_000_000 if unit == "mhz" else 1e-3
-            return number * multiplier
-        if unit in {"uvpp", "uv"}:
-            return number * 1e-6
-        return None
+        unit = match.group(2)
+        lower = unit.lower()
+        if lower.endswith("vpp"):
+            prefix = unit[:-3]
+        elif lower.endswith("hz"):
+            prefix = unit[:-2]
+        elif lower.endswith("v"):
+            prefix = unit[:-1]
+        else:
+            return None
+
+        multiplier = cls._SI_PREFIX_MULTIPLIERS.get(prefix)
+        if multiplier is None:
+            return None
+        return number * multiplier
 
     @staticmethod
     def _format_value(value: object) -> str:

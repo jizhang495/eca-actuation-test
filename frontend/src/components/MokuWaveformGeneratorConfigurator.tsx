@@ -38,7 +38,7 @@ export function MokuWaveformGeneratorConfigurator({
   disabled = false,
 }: MokuWaveformGeneratorConfiguratorProps) {
   const addStage = () => {
-    if (stages.length >= 10) return;
+    if (stages.length >= 30) return;
 
     const lastStage = stages[stages.length - 1];
     const startTime = lastStage ? lastStage.end_time : 0;
@@ -197,12 +197,12 @@ export function MokuWaveformGeneratorConfigurator({
 
         <Button
           onClick={addStage}
-          disabled={disabled || stages.length >= 10}
+          disabled={disabled || stages.length >= 30}
           variant="outline"
           className="w-full"
         >
           <Plus className="mr-2 h-4 w-4" />
-          Add Stage {stages.length > 0 && `(${stages.length}/10)`}
+          Add Stage {stages.length > 0 && `(${stages.length}/30)`}
         </Button>
     </div>
   );

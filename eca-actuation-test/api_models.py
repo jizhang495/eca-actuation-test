@@ -58,7 +58,7 @@ class MeasurementConfig(BaseModel):
     relay_ch2_stages: list[RelayStage] = Field(default_factory=list, max_length=10)
     moku_waveform_generator_stages: list[MokuWaveformGeneratorStage] = Field(
         default_factory=list,
-        max_length=10,
+        max_length=30,
         description="Moku:Pro Waveform Generator stages for output 1",
     )
     sampling_rate_hz: float = Field(default=10.0, description="DMM sampling rate in Hz", gt=0)
