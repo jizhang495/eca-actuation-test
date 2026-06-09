@@ -1,0 +1,165 @@
+{
+  "test_name": "moku_freqsweep_square_0p5v",
+  "measurement_source": "moku",
+  "dmm1_visa_id": null,
+  "dmm2_visa_id": null,
+  "oscilloscope_visa_id": null,
+  "moku_address": "default",
+  "power_supply_visa_id": null,
+  "relay_port": "default",
+  "voltage_stages": [],
+  "relay_ch1_stages": [],
+  "relay_ch2_stages": [
+    {
+      "start_time": 5.0,
+      "end_time": 436.0,
+      "state": "closed"
+    }
+  ],
+  "moku_waveform_generator_stages": [
+    {
+      "start_time": 5.5,
+      "end_time": 65.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.05
+    },
+    {
+      "start_time": 65.5,
+      "end_time": 95.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.1
+    },
+    {
+      "start_time": 95.5,
+      "end_time": 115.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.2
+    },
+    {
+      "start_time": 115.5,
+      "end_time": 135.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.3
+    },
+    {
+      "start_time": 135.5,
+      "end_time": 155.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.4
+    },
+    {
+      "start_time": 155.5,
+      "end_time": 175.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.5
+    },
+    {
+      "start_time": 175.5,
+      "end_time": 195.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.6
+    },
+    {
+      "start_time": 195.5,
+      "end_time": 215.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.7
+    },
+    {
+      "start_time": 215.5,
+      "end_time": 235.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.8
+    },
+    {
+      "start_time": 235.5,
+      "end_time": 255.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 0.9
+    },
+    {
+      "start_time": 255.5,
+      "end_time": 275.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 1.0
+    },
+    {
+      "start_time": 275.5,
+      "end_time": 295.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 2.0
+    },
+    {
+      "start_time": 295.5,
+      "end_time": 315.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 3.0
+    },
+    {
+      "start_time": 315.5,
+      "end_time": 335.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 4.0
+    },
+    {
+      "start_time": 335.5,
+      "end_time": 355.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 5.0
+    },
+    {
+      "start_time": 355.5,
+      "end_time": 375.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 6.0
+    },
+    {
+      "start_time": 375.5,
+      "end_time": 395.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 7.0
+    },
+    {
+      "start_time": 395.5,
+      "end_time": 415.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 8.0
+    },
+    {
+      "start_time": 415.5,
+      "end_time": 435.5,
+      "waveform": "Square",
+      "vpp": 1.0,
+      "frequency_hz": 10.0
+    }
+  ],
+  "sampling_rate_hz": 10.0,
+  "moku_sample_rate_hz": 10000.0,
+  "moku_current_mode": "sr551_differential",
+  "current_shunt_ohms": 330.0,
+  "current_amplifier_gain": 10.0,
+  "moku_current_input_range": "4Vpp",
+  "dmm_acquisition_mode": "low_noise",
+  "stop_after_seconds": 438.0,
+  "record_camera": true,
+  "auto_download_camera_recording": true,
+  "camera_ready_delay_seconds": 2.0
+}
