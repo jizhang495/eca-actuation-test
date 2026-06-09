@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-OUT = REPO / "user-data" / "experiment-configs"
+OUT = REPO / "user-data" / "experiment-configs" / "sweeps"
 
 BASELINE = 5.0     # relay open at start (actuator shorted) before the sweep
 SETTLE = 0.5       # relay closed, settling, before the generator turns on
@@ -160,12 +160,12 @@ SPECS = {
     ),
     # Frequency sweeps at +/-0.5 V (Vpp 1.0) -> Bode-like theta_pp(f). One per waveform.
     "moku_freqsweep_sine_0p5v": dict(conditions=freq_sweep("Sine", 1.0), current_range="400mVpp", sample_rate=2000.0),
-    "moku_freqsweep_square_0p5v": dict(conditions=freq_sweep("Square", 1.0), current_range="4Vpp", sample_rate=10000.0),
     "moku_freqsweep_triangle_0p5v": dict(conditions=freq_sweep("Ramp", 1.0), current_range="400mVpp", sample_rate=2000.0),
+    "moku_freqsweep_square_0p5v": dict(conditions=freq_sweep("Square", 1.0), current_range="4Vpp", sample_rate=10000.0),
     # Amplitude sweeps at 0.1 Hz, +/-0.1..+/-0.8 V -> linearity theta_pp(V). One per waveform.
     "moku_ampsweep_sine_0p1hz": dict(conditions=amp_sweep("Sine", 0.1, 5), current_range="400mVpp", sample_rate=2000.0),
-    "moku_ampsweep_square_0p1hz": dict(conditions=amp_sweep("Square", 0.1, 5), current_range="4Vpp", sample_rate=10000.0),
     "moku_ampsweep_triangle_0p1hz": dict(conditions=amp_sweep("Ramp", 0.1, 5), current_range="400mVpp", sample_rate=2000.0),
+    "moku_ampsweep_square_0p1hz": dict(conditions=amp_sweep("Square", 0.1, 5), current_range="4Vpp", sample_rate=10000.0),
     # CV-like triangular scan-rate sweep at +/-0.8 V (20/50/100 mV/s).
     "moku_cv_triangle_0p8v": dict(conditions=cv_sweep(0.8, [100.0, 50.0, 20.0], 2), current_range="400mVpp", sample_rate=2000.0),
 }
@@ -173,12 +173,13 @@ SPECS = {
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    print(f"{'preset':34s} {'stages':6s} {'dur(s)':8s} {'range':8s} {'rate':6s} cam")
-    for name, spec in SPECS.items():
+    print(f"{'file':36s} {'preset':34s} {'stages':6s} {'dur(s)':8s} {'range':8s} {'rate':6s} cam")
+    for index, (name, spec) in enumerate(SPECS.items()):
         cfg = make_config(name, **spec)
-        (OUT / f"{name}.json").write_text(json.dumps(cfg, indent=2) + "\n")
+        file_name = f"{index}_{name}.json"
+        (OUT / file_name).write_text(json.dumps(cfg, indent=2) + "\n")
         print(
-            f"{name:34s} {len(cfg['moku_waveform_generator_stages']):<6d} "
+            f"{file_name:36s} {name:34s} {len(cfg['moku_waveform_generator_stages']):<6d} "
             f"{cfg['stop_after_seconds']:<8.1f} {cfg['moku_current_input_range']:8s} "
             f"{int(cfg['moku_sample_rate_hz']):<6d} {cfg['record_camera']}"
         )

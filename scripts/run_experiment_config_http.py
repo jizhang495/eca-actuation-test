@@ -30,8 +30,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "config",
         help=(
-            "Saved config filename under user-data/experiment-configs, e.g. "
-            "step_voltage_relay2_750s_oscilloscope.json"
+            "Saved config path under user-data/experiment-configs, e.g. "
+            "step_voltage_relay2_750s_oscilloscope.json or "
+            "sweeps/0_moku_first_compare_0p5v_0p1hz.json"
         ),
     )
     parser.add_argument("--app-url", default=DEFAULT_APP_URL)
@@ -67,8 +68,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def config_file_name(value: str) -> str:
-    name = Path(value).name
-    return name if name.lower().endswith(".json") else f"{name}.json"
+    path = Path(value.replace("\\", "/"))
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("Config path must be a relative path under user-data/experiment-configs")
+    if path.suffix.lower() != ".json":
+        path = path.with_name(f"{path.name}.json")
+    return path.as_posix()
 
 
 def load_local_config(name: str) -> dict:
@@ -226,7 +231,7 @@ def main() -> int:
         app_process = maybe_start_app(app_url, args.no_start_services)
 
         query = urlencode({"control_source": "agent"})
-        start_url = f"{app_url}/api/experiment_configs/start/{quote(name)}?{query}"
+        start_url = f"{app_url}/api/experiment_configs/start/{quote(name, safe='/')}?{query}"
         response = request_json("POST", start_url, timeout=30.0)
         session_id = response["session_id"]
         print(f"started {session_id} from {name}", flush=True)

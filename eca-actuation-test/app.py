@@ -103,14 +103,19 @@ def _config_file_name(requested_name: str | None, test_name: str) -> str:
 
 
 def _experiment_config_path(file_name: str) -> Path:
-    """Resolve a saved experiment config filename without allowing traversal."""
-    safe_name = Path(file_name).name
-    if not safe_name.lower().endswith(".json"):
-        safe_name = f"{safe_name}.json"
-    if safe_name in {"", ".", ".."}:
+    """Resolve a saved experiment config path without allowing traversal."""
+    requested_path = Path(file_name.replace("\\", "/"))
+    if (
+        not file_name.strip()
+        or requested_path.is_absolute()
+        or any(part in {"", ".", ".."} for part in requested_path.parts)
+    ):
         raise ValueError("Experiment config filename is required")
 
-    config_path = EXPERIMENT_CONFIG_DIR / safe_name
+    if requested_path.suffix.lower() != ".json":
+        requested_path = requested_path.with_name(f"{requested_path.name}.json")
+
+    config_path = EXPERIMENT_CONFIG_DIR / requested_path
     resolved_root = EXPERIMENT_CONFIG_DIR.resolve()
     resolved_path = config_path.resolve()
     if resolved_root not in resolved_path.parents and resolved_path != resolved_root:
@@ -400,7 +405,7 @@ async def save_experiment_config(request: SaveExperimentConfigRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/experiment_configs/start/{file_name}")
+@app.post("/api/experiment_configs/start/{file_name:path}")
 async def start_experiment_config(
     file_name: str,
     control_source: ControlSource = Query(default="api"),
@@ -417,7 +422,7 @@ async def start_experiment_config(
         if not config_path.exists() or not config_path.is_file():
             raise HTTPException(
                 status_code=404,
-                detail=f"Experiment config not found: {config_path.name}",
+                detail=f"Experiment config not found: {config_path.relative_to(EXPERIMENT_CONFIG_DIR)}",
             )
 
         config = MeasurementConfig.model_validate_json(
@@ -428,12 +433,13 @@ async def start_experiment_config(
             control_source=control_source,
         )
         _arm_auto_camera_download(session_id, config)
+        relative_path = config_path.relative_to(EXPERIMENT_CONFIG_DIR).as_posix()
         return {
             "success": True,
             "session_id": session_id,
-            "file_name": config_path.name,
+            "file_name": relative_path,
             "path": str(config_path),
-            "message": f"Measurement started from {config_path.name}",
+            "message": f"Measurement started from {relative_path}",
         }
     except HTTPException:
         raise

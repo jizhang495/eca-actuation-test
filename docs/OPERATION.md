@@ -271,7 +271,7 @@ Auto-download runs only when both of these config fields are true:
 }
 ```
 
-The full-run presets in `user-data/experiment-configs/` enable both fields.
+The full-run presets in `user-data/experiment-configs/` and sweep presets in `user-data/experiment-configs/sweeps/` enable both fields where camera recording is intended.
 
 ## Session Outputs
 

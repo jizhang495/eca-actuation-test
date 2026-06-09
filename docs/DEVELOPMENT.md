@@ -127,7 +127,7 @@ PYTHONPATH=eca-actuation-test uv run python3 - <<'PY'
 from pathlib import Path
 from api_models import MeasurementConfig
 
-for path in sorted(Path('user-data/experiment-configs').glob('*.json')):
+for path in sorted(Path('user-data/experiment-configs').rglob('*.json')):
     MeasurementConfig.model_validate_json(path.read_text(encoding='utf-8'))
     print(f'valid {path}')
 PY
