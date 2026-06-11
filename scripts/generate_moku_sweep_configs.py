@@ -38,7 +38,7 @@ MAX_SESSION = 720.0
 MAX_STAGES = 30
 
 # Frequencies in the reference frequency-sweep figure (Hz).
-FREQS = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 10]
+FREQS = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 # Amplitude sweep at 0.1 Hz: +/-0.1 .. +/-0.8 V (Vpp = 2 * amplitude).
 AMP_VPPS = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
 
