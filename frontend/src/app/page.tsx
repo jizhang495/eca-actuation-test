@@ -437,6 +437,7 @@ export default function Home() {
   const [controlSource, setControlSource] = useState<ControlSource | null>(null);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
   const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [frozenElapsedTime, setFrozenElapsedTime] = useState<number | null>(null);
   const [latestTiming, setLatestTiming] = useState<{
     readDurationMs?: number | null;
     loopDurationMs?: number | null;
@@ -739,6 +740,12 @@ export default function Home() {
       setControlSource(data.control_source || null);
       setRuntimeEvents(data.events || []);
       setElapsedTime(data.elapsed_time || 0);
+      setFrozenElapsedTime((prev) => {
+        if (data.is_stopping) {
+          return prev ?? data.elapsed_time ?? 0;
+        }
+        return null;
+      });
       setLatestTiming((prev) => ({
         readDurationMs: data.acquisition?.last_read_duration_ms ?? prev.readDurationMs,
         loopDurationMs: data.acquisition?.last_loop_duration_ms ?? prev.loopDurationMs,
@@ -1029,6 +1036,7 @@ export default function Home() {
       setDmm1Data([]);
       setDmm2Data([]);
       setElapsedTime(0);
+      setFrozenElapsedTime(null);
       setLatestTiming({});
 
       console.log("Measurement started:", data);
@@ -1079,6 +1087,7 @@ export default function Home() {
     // waveform off the device), so guard against duplicate clicks that would
     // otherwise hit the backend "already stopping" error.
     if (isStopping || serverStopping) return;
+    setFrozenElapsedTime(elapsedTime);
     setIsStopping(true);
     try {
       const response = await fetch("/api/stop_measurement?control_source=ui", {
@@ -1121,6 +1130,7 @@ export default function Home() {
   // Combine the optimistic local stop (instant button feedback) with the
   // backend's is_stopping flag (so the state survives a mid-stop page reload).
   const stopping = isStopping || serverStopping;
+  const displayElapsedTime = frozenElapsedTime ?? elapsedTime;
   const controlSourceLabel =
     controlSource === "ui"
       ? "Human UI"
@@ -1204,7 +1214,7 @@ export default function Home() {
             </div>
 
             <div className="flex h-10 min-w-20 items-center text-sm font-mono text-muted-foreground">
-              {isMeasuring ? `${elapsedTime.toFixed(3)} s` : null}
+              {isMeasuring ? `${displayElapsedTime.toFixed(3)} s` : null}
             </div>
 
             <Button
