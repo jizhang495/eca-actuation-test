@@ -411,7 +411,18 @@ async def start_record():
     In development: runs in mock mode
     """
     if camera_state["is_recording"]:
-        raise HTTPException(status_code=400, detail="Camera already recording")
+        # Defensive reset-on-start: a previous run may have left the flag stuck
+        # true (the camera self-stopped at its size/time limit and the EDSDK stop
+        # then errored). Clear it and start fresh instead of hard-failing, so a
+        # stale flag never wedges every subsequent run; each run owns the camera
+        # exclusively, so any lingering recording should be ended first.
+        logger.warning("Camera flagged as recording at start; resetting before new recording")
+        if CAMERA_CONTROL_BIN.exists() and camera_daemon.is_running():
+            try:
+                camera_daemon.command("stop", timeout=5)
+            except Exception as exc:
+                logger.warning("Reset-stop before start failed: %s", exc)
+        camera_state["is_recording"] = False
     
     request_received_epoch_us = epoch_us()
     timing = camera_timing_payload(request_received_epoch_us, None, None)

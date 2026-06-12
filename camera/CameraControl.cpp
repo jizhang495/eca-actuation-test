@@ -123,11 +123,14 @@ public:
 
         EdsUInt32 recordStop = 0;
         err = EdsSetPropertyData(camera_, kEdsPropID_Record, 0, sizeof(recordStop), &recordStop);
-        if (err == EDS_ERR_OK) {
-            recording_ = false;
-        } else {
+        if (err != EDS_ERR_OK) {
             printError("stop recording", err);
         }
+        // The intent of "stop" is "not recording": clear the flag even when the
+        // EDSDK call errors because the camera had already self-stopped (e.g. it
+        // hit the 4 GB file / 29-minute movie limit). Otherwise a self-stop
+        // leaves recording_ stuck true and wedges every subsequent run.
+        recording_ = false;
         return err;
     }
 
