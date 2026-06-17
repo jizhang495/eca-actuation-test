@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 import json
 import os
 import re
@@ -214,8 +215,91 @@ def copy_gio_file(source_uri: str, destination: Path, force: bool) -> None:
         raise RuntimeError(result.stderr.strip() or f"gio copy failed for {source_uri}")
 
 
+def _parse_creation_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def probe_video_metadata(video_path: Path) -> dict:
+    """Read stable embedded timing/stream metadata from a local video file."""
+    ffprobe_bin = shutil.which("ffprobe")
+    if not ffprobe_bin:
+        return {}
+
+    result = run_command(
+        [
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-show_entries",
+            (
+                "format=duration:format_tags=creation_time:"
+                "stream=codec_type,codec_name,width,height,avg_frame_rate:"
+                "stream_tags=creation_time"
+            ),
+            "-of",
+            "json",
+            str(video_path),
+        ],
+        timeout=60,
+    )
+    if result.returncode != 0:
+        return {}
+
+    try:
+        ffprobe_data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+    video_stream = next(
+        (
+            stream
+            for stream in ffprobe_data.get("streams", [])
+            if stream.get("codec_type") == "video"
+        ),
+        {},
+    )
+    format_info = ffprobe_data.get("format", {})
+    format_tags = format_info.get("tags", {})
+    stream_tags = video_stream.get("tags", {})
+
+    creation_time = format_tags.get("creation_time") or stream_tags.get("creation_time")
+    duration_seconds = None
+    try:
+        duration_seconds = float(format_info["duration"])
+    except (KeyError, TypeError, ValueError):
+        pass
+
+    metadata = {
+        "embedded_creation_time_utc": creation_time,
+        "duration_seconds": duration_seconds,
+        "codec": video_stream.get("codec_name"),
+        "width": video_stream.get("width"),
+        "height": video_stream.get("height"),
+        "avg_frame_rate": video_stream.get("avg_frame_rate"),
+    }
+
+    parsed_creation = _parse_creation_time(creation_time)
+    if parsed_creation and duration_seconds is not None:
+        metadata["estimated_end_time_utc"] = _format_utc_timestamp(
+            parsed_creation + timedelta(seconds=duration_seconds)
+        )
+
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
 def write_metadata(destination: Path, session_dir: Path, camera_file: CameraFile) -> None:
     metadata_path = destination.with_suffix(destination.suffix + ".json")
+    video_metadata = probe_video_metadata(destination)
     payload = {
         "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "session_dir": str(session_dir),
@@ -225,6 +309,10 @@ def write_metadata(destination: Path, session_dir: Path, camera_file: CameraFile
         "source_size_bytes": camera_file.size,
         "local_file": str(destination),
     }
+    if "embedded_creation_time_utc" in video_metadata:
+        payload["embedded_creation_time_utc"] = video_metadata["embedded_creation_time_utc"]
+    if video_metadata:
+        payload["video_metadata"] = video_metadata
     metadata_path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
