@@ -182,6 +182,17 @@ For `oscilloscope_waveform.csv`, the same names are used with the `oscilloscope_
 
 The summary markdown gives whole-run charge totals and a compact per-edge table. The edge-fit CSV contains the fit parameters, BIC values, raw-window charge, median-window charge, and modeled-window charge.
 
+## Charge Panel in the Waveform Analysis Plot
+
+`scripts/plot_oscilloscope_waveform.py` (and therefore `plot-moku.sh`) shows a
+charge panel in `*_analysis.svg` by reading `cumulative_charge_uC` from
+`*_charge_transfer_timeseries.csv`. It does **not** integrate the raw CH2 current
+itself: a naive cumulative integral accumulates the small whole-run current
+offset (a ~0.16 uA offset over 750 s is ~0.12 mC, which dominates the real signed
+charge and makes the trace ramp monotonically). The panel is shown only when the
+timeseries exists, so run this analyzer first for the relay/step runs; sweep runs
+have no relay edges and get no charge panel.
+
 ## Interpreting Current Results
 
 For `2026-05-22_12-45-22_step_voltage_relay2_750s_moku`, the current workflow supports using Moku for charge-transfer analysis:

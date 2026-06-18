@@ -211,14 +211,29 @@ def peak_preserving_downsample(
     return x[selected], y[selected]
 
 
-def cumulative_charge_mc(time_seconds: np.ndarray, current_ma: np.ndarray) -> np.ndarray:
-    """Cumulative charge in mC from current in mA integrated over time in s."""
-    t = np.asarray(time_seconds, dtype=float)
-    i = np.asarray(current_ma, dtype=float)
-    charge = np.zeros_like(i)
-    if len(i) > 1:
-        charge[1:] = np.cumsum(0.5 * (i[1:] + i[:-1]) * np.diff(t))
-    return charge
+def load_charge_timeseries(csv_path: Path) -> "tuple[np.ndarray, np.ndarray] | None":
+    """Signed cumulative charge (time_s, uC) from the charge-transfer model.
+
+    Reads ``<stem>_charge_transfer_timeseries.csv`` (written by
+    analyze_charge_transfer.py) beside the waveform CSV, or returns None if it is
+    absent. That trace uses per-edge local baselines and a modeled current, so it
+    does not accumulate the small whole-run current offset that a raw integral of
+    the CH2 current would -- which otherwise makes the charge ramp monotonically.
+    """
+    ts_path = csv_path.with_name(f"{csv_path.stem}_charge_transfer_timeseries.csv")
+    if not ts_path.exists():
+        return None
+    frame = pd.read_csv(ts_path)
+    if not {"time_s", "cumulative_charge_uC"}.issubset(frame.columns):
+        return None
+    frame = (
+        frame[["time_s", "cumulative_charge_uC"]]
+        .apply(pd.to_numeric, errors="coerce")
+        .dropna()
+    )
+    if frame.empty:
+        return None
+    return frame["time_s"].to_numpy(), frame["cumulative_charge_uC"].to_numpy()
 
 
 def _read_tracking_csv(path: Path) -> pd.DataFrame:
@@ -360,12 +375,17 @@ def plot_analysis_waveform(
     shunt_ohms: float,
     bin_ms: float,
     deflection: "tuple[np.ndarray, np.ndarray, str] | None" = None,
+    charge: "tuple[np.ndarray, np.ndarray] | None" = None,
 ) -> None:
     """Binned-median voltage, current, charge, and (if tracked) deflection.
 
-    Charge is the cumulative integral of current over time. Deflection is
-    atan(dy/dx) from manual or OpenCV tip tracking. All panels share the time
-    axis with no vertical gap between them.
+    Charge is the signed cumulative charge from analyze_charge_transfer.py
+    (per-edge local baselines + a modeled current trace), read from the
+    session's ``*_charge_transfer_timeseries.csv``. A naive integral of the raw
+    current just accumulates the ~uA instrument offset over the run, so the
+    charge panel is shown only when that file exists (e.g. relay/step runs) and
+    omitted otherwise (e.g. sweeps). Deflection is atan(dy/dx) from manual or
+    OpenCV tip tracking. All panels share the time axis with no vertical gap.
     """
     if x_column not in data.columns:
         raise RuntimeError(f"CSV does not contain x-axis column: {x_column}")
@@ -384,11 +404,6 @@ def plot_analysis_waveform(
         analysis_data["current_ma"] = (
             analysis_data[current_voltage_column] / shunt_ohms * 1000.0
         )
-    analysis_data["charge_mc"] = cumulative_charge_mc(
-        analysis_data[x_column].to_numpy(dtype=float),
-        analysis_data["current_ma"].to_numpy(dtype=float),
-    )
-
     bin_width_seconds = bin_ms / 1000.0
 
     def bin_summary(x_values: np.ndarray, y_values: np.ndarray) -> pd.DataFrame:
@@ -407,18 +422,27 @@ def plot_analysis_waveform(
             .reset_index(drop=True)
         )
 
+    x_lo = float(analysis_data[x_column].min())
+    x_hi = float(analysis_data[x_column].max())
+
     panels = [
         (bin_summary(analysis_data[x_column], analysis_data[voltage_column]), "#1f77b4", "CH1 voltage (V)"),
         (bin_summary(analysis_data[x_column], analysis_data["current_ma"]), "#d62728", "Current (mA)"),
-        (bin_summary(analysis_data[x_column], analysis_data["charge_mc"]), "#2ca02c", "Charge (mC)"),
     ]
     if panels[0][0].empty:
         raise RuntimeError("No analysis bins produced")
 
+    # Charge: signed cumulative from the charge-transfer model (not a raw integral).
+    if charge is not None:
+        ct, cq = charge
+        in_range = (ct >= x_lo) & (ct <= x_hi)
+        if in_range.any():
+            panels.append(
+                (bin_summary(ct[in_range], cq[in_range]), "#2ca02c", "Charge (uC)")
+            )
+
     if deflection is not None:
         td, theta, _ = deflection
-        x_lo = float(analysis_data[x_column].min())
-        x_hi = float(analysis_data[x_column].max())
         in_range = (td >= x_lo) & (td <= x_hi)
         if in_range.any():
             panels.append(
@@ -533,9 +557,11 @@ def main() -> int:
             max_points=args.max_points,
         )
         deflection = None
+        charge = None
         if args.analysis_output:
             if not args.no_deflection:
                 deflection = load_deflection(args.csv_path, args.tracking_csv)
+            charge = load_charge_timeseries(args.csv_path)
             args.analysis_output.parent.mkdir(parents=True, exist_ok=True)
             plot_analysis_waveform(
                 data=data,
@@ -546,6 +572,7 @@ def main() -> int:
                 shunt_ohms=args.shunt_ohms,
                 bin_ms=args.analysis_bin_ms,
                 deflection=deflection,
+                charge=charge,
             )
     except (FileNotFoundError, RuntimeError, pd.errors.ParserError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -554,6 +581,10 @@ def main() -> int:
     print(f"Wrote {output_path}")
     if args.analysis_output:
         print(f"Wrote {args.analysis_output}")
+        if charge is not None:
+            print("Charge panel from charge-transfer timeseries")
+        else:
+            print("Charge panel: omitted (no *_charge_transfer_timeseries.csv; run analyze_charge_transfer.py)")
         if deflection is not None:
             print(f"Deflection panel from {deflection[2]}")
         elif not args.no_deflection:
