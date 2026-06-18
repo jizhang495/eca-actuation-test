@@ -1,0 +1,109 @@
+{
+  "_comment": "Setup-group seeds for batch-tracking session videos without Blender ground truth. Seeds are in Blender bottom-left pixel origin (y up), so y_blender = frame_height - y_image. One group per camera setup-day; a session may override tip_seed_px/reference_seed_px if its framing drifted. Tracker uses LK prediction + fixed-template correction (use_lk_prediction true), which follows the moving filament tip through large low-frequency sweep excursions where a fixed template alone drifts. Verify outputs with the displacement-plot QA montage; re-seed any session whose plot looks flat/garbage. See track_session_videos.py.",
+  "default_params": {
+    "lk_window_fraction": 0.085,
+    "lk_window_min_px": 51,
+    "lk_window_max_px": 101,
+    "lk_max_level": 3,
+    "lk_min_eig_threshold": 0.000001,
+    "use_lk_prediction": true,
+    "template_radius_fraction": 0.035,
+    "template_radius_min_px": 20,
+    "template_radius_max_px": 38,
+    "template_search_fraction": 0.045,
+    "template_search_min_px": 28,
+    "template_search_max_px": 54,
+    "template_every_n": 1,
+    "template_min_score": 0.25,
+    "max_template_correction_px": 6.0,
+    "smoothing_window_s": 0.5,
+    "jump_reject_max_px": 0.0,
+    "relay_event_first_s": 50.0,
+    "relay_event_period_s": 50.0,
+    "relay_event_window_s": 5.0
+  },
+  "groups": [
+    {
+      "name": "2026-06-09_sweeps",
+      "_seed_source": "MVI_7010 frame 0 verified: tip image (690,600), ref image (430,240)",
+      "tip_seed_px": [690, 120],
+      "reference_seed_px": [430, 480],
+      "params": {"method": "template"},
+      "sessions": [
+        "user-data/sessions/2026-06-09_16-16-55_moku_freqsweep_sine_0p5v",
+        "user-data/sessions/2026-06-09_16-33-15_moku_freqsweep_sine_0p5v",
+        "user-data/sessions/2026-06-09_16-47-36_moku_freqsweep_sine_0p5v",
+        "user-data/sessions/2026-06-09_17-01-29_moku_freqsweep_triangle_0p5v",
+        "user-data/sessions/2026-06-09_17-26-10_moku_freqsweep_square_0p5v",
+        "user-data/sessions/2026-06-09_17-38-07_moku_freqsweep_square_0p5v",
+        "user-data/sessions/2026-06-09_17-50-57_moku_freqsweep_square_0p5v",
+        "user-data/sessions/2026-06-09_18-02-12_moku_freqsweep_square_0p5v",
+        "user-data/sessions/2026-06-09_18-16-02_moku_ampsweep_sine_0p1hz",
+        "user-data/sessions/2026-06-09_18-27-11_moku_ampsweep_sine_0p1hz",
+        "user-data/sessions/2026-06-09_18-37-43_moku_ampsweep_triangle_0p1hz",
+        "user-data/sessions/2026-06-09_18-50-06_moku_ampsweep_triangle_0p1hz"
+      ]
+    },
+    {
+      "name": "2026-06-12_steps_pm",
+      "_seed_source": "MVI_7035 frame 0 verified: tip image (635,605), ref image (455,285)",
+      "tip_seed_px": [635, 115],
+      "reference_seed_px": [455, 435],
+      "params": {"method": "template"},
+      "sessions": [
+        "user-data/sessions/2026-06-12_17-14-27_step_voltage_relay2_750s_moku",
+        "user-data/sessions/2026-06-12_17-32-00_step_voltage_relay2_750s_moku",
+        "user-data/sessions/2026-06-12_17-52-04_step_voltage_relay2_750s_moku",
+        "user-data/sessions/2026-06-12_18-06-55_step_voltage_relay2_750s_moku"
+      ]
+    },
+    {
+      "name": "2026-06-11_sweeps",
+      "_seed_source": "autoseed2 motion-peak: free tip at image ~(768,580) for 7022-7026; 7027 step reframed slightly",
+      "tip_seed_px": [768, 140],
+      "reference_seed_px": [212, 387],
+      "params": {"method": "template"},
+      "sessions": [
+        "user-data/sessions/2026-06-11_14-09-19_moku_ampsweep_sine_0p1hz",
+        "user-data/sessions/2026-06-11_14-18-43_moku_ampsweep_sine_0p1hz",
+        "user-data/sessions/2026-06-11_14-27-48_moku_ampsweep_square_0p1hz",
+        "user-data/sessions/2026-06-11_14-37-45_moku_ampsweep_square_0p1hz",
+        "user-data/sessions/2026-06-11_14-47-23_moku_ampsweep_square_0p1hz",
+        {"path": "user-data/sessions/2026-06-11_15-04-01_step_voltage_relay2_750s_moku",
+         "tip_seed_px": [748, 122], "reference_seed_px": [218, 377]}
+      ]
+    },
+    {
+      "name": "2026-06-12_step_early",
+      "_seed_source": "autoseed2 motion-peak: free tip at image (713,547), body ref (213,335)",
+      "tip_seed_px": [713, 173],
+      "reference_seed_px": [213, 385],
+      "params": {"method": "template"},
+      "sessions": [
+        "user-data/sessions/2026-06-12_13-00-21_step_voltage_relay2_750s_moku"
+      ]
+    },
+    {
+      "name": "2026-06-17_step",
+      "_seed_source": "autoseed2 motion-peak: free tip at image (930,526), body ref (257,299)",
+      "tip_seed_px": [930, 194],
+      "reference_seed_px": [257, 421],
+      "params": {"method": "template"},
+      "sessions": [
+        "user-data/sessions/2026-06-17_13-16-42_step_voltage_relay2_750s_moku"
+      ]
+    },
+    {
+      "name": "2026-06-05_steps",
+      "_seed_source": "autoseed2 motion-peak: free tip down-right filament; 7008 image (979,551), 7009 image (959,563)",
+      "tip_seed_px": [979, 169],
+      "reference_seed_px": [543, 417],
+      "params": {"method": "template"},
+      "sessions": [
+        "user-data/sessions/2026-06-05_12-26-52_step_voltage_relay2_750s_moku",
+        {"path": "user-data/sessions/2026-06-05_12-52-40_step_voltage_relay2_750s_moku",
+         "tip_seed_px": [959, 157], "reference_seed_px": [548, 419]}
+      ]
+    }
+  ]
+}

@@ -551,8 +551,14 @@ def track_video(
 
     cap.release()
     smoothing_window_s = float(config.params.get("smoothing_window_s", 0.0))
-    if smoothing_window_s > 0:
-        smooth_tracking_csv(output_path, metadata.fps, smoothing_window_s)
+    jump_reject_max_px = float(config.params.get("jump_reject_max_px", 0.0))
+    if smoothing_window_s > 0 or jump_reject_max_px > 0:
+        filter_tracking_csv(
+            output_path,
+            metadata.fps,
+            smoothing_window_s=smoothing_window_s,
+            jump_reject_max_px=jump_reject_max_px,
+        )
     elapsed = time.monotonic() - start_time
     print(
         f"{config.video_id}: wrote {output_path} "
@@ -562,27 +568,75 @@ def track_video(
     return output_path
 
 
-def smooth_tracking_csv(output_path: Path, fps: float, smoothing_window_s: float) -> None:
+def filter_tracking_csv(
+    output_path: Path,
+    fps: float,
+    *,
+    smoothing_window_s: float,
+    jump_reject_max_px: float,
+) -> None:
     df = pd.read_csv(output_path)
     if df.empty:
         return
 
+    raw_tip_x = df["raw_tip_x_px"] if "raw_tip_x_px" in df.columns else df["tip_x_px"]
+    raw_tip_y = df["raw_tip_y_px"] if "raw_tip_y_px" in df.columns else df["tip_y_px"]
+    df["raw_tip_x_px"] = raw_tip_x
+    df["raw_tip_y_px"] = raw_tip_y
+    df["raw_displacement_x_px"] = raw_tip_x - df["clamp_x_px"]
+    df["raw_displacement_y_px"] = raw_tip_y - df["clamp_y_px"]
+
+    filtered_x = raw_tip_x.astype(float).copy()
+    filtered_y = raw_tip_y.astype(float).copy()
+    filter_status = pd.Series("", index=df.index, dtype=object)
+
+    if jump_reject_max_px > 0 and len(df) > 2:
+        previous_step = np.hypot(filtered_x - filtered_x.shift(1), filtered_y - filtered_y.shift(1))
+        next_step = np.hypot(filtered_x - filtered_x.shift(-1), filtered_y - filtered_y.shift(-1))
+        neighbor_span = np.hypot(
+            filtered_x.shift(-1) - filtered_x.shift(1),
+            filtered_y.shift(-1) - filtered_y.shift(1),
+        )
+        rejected = (
+            previous_step.gt(jump_reject_max_px)
+            & next_step.gt(jump_reject_max_px)
+            & neighbor_span.le(jump_reject_max_px)
+        ).to_numpy()
+        rejected |= (~np.isfinite(filtered_x.to_numpy())) | (~np.isfinite(filtered_y.to_numpy()))
+        rejected[0] = False
+        rejected[-1] = False
+
+        if rejected.any():
+            filtered_x.loc[rejected] = np.nan
+            filtered_y.loc[rejected] = np.nan
+            filtered_x = filtered_x.interpolate(limit_direction="both")
+            filtered_y = filtered_y.interpolate(limit_direction="both")
+            filter_status.loc[rejected] = "jump_rejected"
+
     window = int(round(smoothing_window_s * fps))
-    if window < 3:
-        return
+    if smoothing_window_s > 0 and window < 3:
+        window = 3
     if window % 2 == 0:
         window += 1
+    if smoothing_window_s > 0 and window >= 3:
+        filtered_x = filtered_x.rolling(window, center=True, min_periods=1).median()
+        filtered_y = filtered_y.rolling(window, center=True, min_periods=1).median()
+        smoothing_status = f"median_{window}_frames"
+        filter_status = filter_status.where(
+            filter_status == "",
+            filter_status + ";" + smoothing_status,
+        )
+        filter_status = filter_status.mask(filter_status == "", smoothing_status)
 
-    df["raw_tip_x_px"] = df["tip_x_px"]
-    df["raw_tip_y_px"] = df["tip_y_px"]
-    df["tip_x_px"] = df["raw_tip_x_px"].rolling(window, center=True, min_periods=1).median()
-    df["tip_y_px"] = df["raw_tip_y_px"].rolling(window, center=True, min_periods=1).median()
+    df["tip_x_px"] = filtered_x
+    df["tip_y_px"] = filtered_y
 
     # Preserve the exact manual seed on frame 0; the clamp/reference remains fixed throughout.
     df.loc[df.index[0], "tip_x_px"] = df.loc[df.index[0], "raw_tip_x_px"]
     df.loc[df.index[0], "tip_y_px"] = df.loc[df.index[0], "raw_tip_y_px"]
     df["displacement_x_px"] = df["tip_x_px"] - df["clamp_x_px"]
     df["displacement_y_px"] = df["tip_y_px"] - df["clamp_y_px"]
+    df["filter_status"] = filter_status
     df.to_csv(output_path, index=False)
 
 
@@ -1013,6 +1067,16 @@ def write_preview_video(
             cv2.circle(output_frame, tip, 7, (255, 255, 0), 2, cv2.LINE_AA)
             draw_cross(output_frame, clamp, (0, 255, 0), 8, 2)
 
+            if "raw_tip_x_px" in row.index and "raw_tip_y_px" in row.index:
+                raw_tip = cv_point_from_blender_xy(
+                    row["raw_tip_x_px"],
+                    row["raw_tip_y_px"],
+                    metadata.height,
+                    scale,
+                )
+                if math.dist(raw_tip, tip) >= 1.0:
+                    draw_cross(output_frame, raw_tip, (255, 0, 255), 5, 2)
+
             if manual_by_frame is not None and frame_idx in manual_by_frame.index:
                 manual_row = manual_by_frame.loc[frame_idx]
                 manual_tip_x = row["clamp_x_px"] + manual_row["manual_displacement_x_px"]
@@ -1020,14 +1084,17 @@ def write_preview_video(
                 manual_tip = cv_point_from_blender_xy(manual_tip_x, manual_tip_y, metadata.height, scale)
                 draw_cross(output_frame, manual_tip, (0, 128, 255), 7, 2)
 
+            filter_status = row.get("filter_status", "")
+            filter_label = "" if pd.isna(filter_status) or str(filter_status) == "" else f"  {filter_status}"
             label = (
                 f"{config.video_id}  frame {frame_idx}  t={frame_idx / metadata.fps:.2f}s  "
-                f"{row['status']}"
+                f"{row['status']}{filter_label}"
             )
             cv2.putText(output_frame, label, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 0), 4, cv2.LINE_AA)
             cv2.putText(output_frame, label, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 1, cv2.LINE_AA)
-            cv2.putText(output_frame, "cyan circle: OpenCV tip   green x: clamp   orange x: manual tip", (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 4, cv2.LINE_AA)
-            cv2.putText(output_frame, "cyan circle: OpenCV tip   green x: clamp   orange x: manual tip", (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+            legend = "cyan circle: filtered tip   magenta x: raw tip   green x: clamp   orange x: manual tip"
+            cv2.putText(output_frame, legend, (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 4, cv2.LINE_AA)
+            cv2.putText(output_frame, legend, (16, 64), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
 
             writer.write(output_frame)
             written += 1
@@ -1044,6 +1111,50 @@ def write_preview_video(
     return output_path
 
 
+def write_relay_preview_videos(
+    config: VideoConfig,
+    tracking_csv: Path,
+    preview_dir: Path,
+    *,
+    window_s: float | None,
+    frame_stride: int,
+    max_width: int,
+    trail_s: float,
+) -> list[Path]:
+    if not tracking_csv.exists():
+        raise RuntimeError(f"Tracking CSV does not exist: {tracking_csv}")
+
+    tracking = pd.read_csv(tracking_csv, usecols=["time_s"])
+    if tracking.empty:
+        raise RuntimeError(f"No tracking rows in {tracking_csv}")
+
+    relay_first_s = float(config.params.get("relay_event_first_s", DEFAULT_RELAY_EVENT_FIRST_S))
+    relay_period_s = float(config.params.get("relay_event_period_s", DEFAULT_RELAY_EVENT_PERIOD_S))
+    relay_window_s = float(
+        window_s
+        if window_s is not None
+        else config.params.get("relay_event_window_s", DEFAULT_RELAY_EVENT_WINDOW_S)
+    )
+    if relay_window_s <= 0:
+        raise RuntimeError("--relay-preview-window-s must be > 0")
+
+    output_paths = []
+    for event_s in relay_event_times(float(tracking["time_s"].max()), relay_first_s, relay_period_s):
+        output_paths.append(
+            write_preview_video(
+                config,
+                tracking_csv,
+                preview_dir,
+                start_s=max(0.0, event_s - relay_window_s),
+                end_s=event_s + relay_window_s,
+                frame_stride=frame_stride,
+                max_width=max_width,
+                trail_s=trail_s,
+            )
+        )
+    return output_paths
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Track actuator tip motion with OpenCV and compare against Blender manual CSVs."
@@ -1056,12 +1167,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-track", action="store_true", help="Only compare existing automated CSVs.")
     parser.add_argument("--no-compare", action="store_true", help="Only write automated tracking CSVs.")
     parser.add_argument("--write-preview", action="store_true", help="Write annotated MP4 tracking previews.")
+    parser.add_argument(
+        "--write-relay-previews",
+        action="store_true",
+        help="Write annotated MP4 previews around configured relay event times.",
+    )
     parser.add_argument("--preview-dir", type=Path, default=DEFAULT_OUTPUT_DIR / "previews")
     parser.add_argument("--preview-stride", type=int, default=2, help="Write one preview frame per N source frames.")
     parser.add_argument("--preview-max-width", type=int, default=1280)
     parser.add_argument("--preview-start-s", type=float)
     parser.add_argument("--preview-end-s", type=float)
     parser.add_argument("--preview-trail-s", type=float, default=2.0)
+    parser.add_argument("--relay-preview-window-s", type=float)
     parser.add_argument("--limit-frames", type=int, help="Debug option: stop after this many frames.")
     parser.add_argument("--progress-every", type=int, default=5000)
     return parser.parse_args()
@@ -1099,6 +1216,16 @@ def main() -> None:
                 args.preview_dir,
                 start_s=args.preview_start_s,
                 end_s=args.preview_end_s,
+                frame_stride=args.preview_stride,
+                max_width=args.preview_max_width,
+                trail_s=args.preview_trail_s,
+            )
+        if args.write_relay_previews:
+            write_relay_preview_videos(
+                config,
+                auto_csv,
+                args.preview_dir,
+                window_s=args.relay_preview_window_s,
                 frame_stride=args.preview_stride,
                 max_width=args.preview_max_width,
                 trail_s=args.preview_trail_s,

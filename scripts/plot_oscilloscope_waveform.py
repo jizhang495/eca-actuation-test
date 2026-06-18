@@ -17,6 +17,7 @@ try:
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
+    from matplotlib.ticker import MaxNLocator
 except ImportError as exc:
     print(
         "error: missing plotting dependency. Run with `uv run python3 "
@@ -94,6 +95,20 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Time-bin width for --analysis-output in milliseconds. Defaults to 10."
         ),
+    )
+    parser.add_argument(
+        "--tracking-csv",
+        type=Path,
+        help=(
+            "Explicit tip-tracking CSV (manual 'time,dx,dy' or OpenCV format) for the "
+            "deflection panel of --analysis-output. Default: auto-detect in the session "
+            "folder, preferring manual Blender tracking over the OpenCV export."
+        ),
+    )
+    parser.add_argument(
+        "--no-deflection",
+        action="store_true",
+        help="Skip the angular-deflection panel even if tracking data is available.",
     )
     return parser.parse_args()
 
@@ -196,6 +211,91 @@ def peak_preserving_downsample(
     return x[selected], y[selected]
 
 
+def cumulative_charge_mc(time_seconds: np.ndarray, current_ma: np.ndarray) -> np.ndarray:
+    """Cumulative charge in mC from current in mA integrated over time in s."""
+    t = np.asarray(time_seconds, dtype=float)
+    i = np.asarray(current_ma, dtype=float)
+    charge = np.zeros_like(i)
+    if len(i) > 1:
+        charge[1:] = np.cumsum(0.5 * (i[1:] + i[:-1]) * np.diff(t))
+    return charge
+
+
+def _read_tracking_csv(path: Path) -> pd.DataFrame:
+    """Load a tracking CSV in either format into columns [time, dx, dy].
+
+    Manual Blender exports are headerless ``time, dx, dy``. OpenCV exports have a
+    header with ``time_s``, ``displacement_x_px``, ``displacement_y_px``. The
+    first cell tells them apart: numeric -> manual, text header -> OpenCV.
+    """
+    first_cell = str(pd.read_csv(path, nrows=1, header=None).iloc[0, 0]).strip()
+    is_headerless = re.fullmatch(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", first_cell) is not None
+    if is_headerless:
+        df = pd.read_csv(path, header=None, names=["time", "dx", "dy"], skipinitialspace=True)
+    else:
+        df = pd.read_csv(path).rename(
+            columns={
+                "time_s": "time",
+                "displacement_x_px": "dx",
+                "displacement_y_px": "dy",
+            }
+        )
+        missing = {"time", "dx", "dy"} - set(df.columns)
+        if missing:
+            raise RuntimeError(f"tracking CSV {path} missing columns: {sorted(missing)}")
+    df = df[["time", "dx", "dy"]].apply(pd.to_numeric, errors="coerce").dropna()
+    return df.sort_values("time")
+
+
+def load_deflection(
+    csv_path: Path, override: Path | None = None
+) -> tuple[np.ndarray, np.ndarray, str] | None:
+    """Return (time, theta_rad, source_label) for the session, or None.
+
+    theta = atan(dy/dx). Prefers manual Blender tracking
+    (``motion-tracking/user-data/data/<id>.csv``) over the OpenCV session export
+    (``<session>/MVI_<id>_opencv.csv``). atan(dy/dx) is invariant to the
+    manual-vs-OpenCV displacement sign flip, so both conventions give the same
+    angle.
+    """
+    if override is not None:
+        source, label = override, f"override: {override.name}"
+    else:
+        session_dir = csv_path.parent
+        videos = (
+            sorted(session_dir.glob("MVI_*.mp4"))
+            or sorted(session_dir.glob("MVI_*.MOV"))
+            or sorted(session_dir.glob("MVI_*.mov"))
+        )
+        video_num = videos[0].stem.replace("MVI_", "") if videos else None
+        repo_root = Path(__file__).resolve().parents[1]
+        manual = (
+            repo_root / "motion-tracking" / "user-data" / "data" / f"{video_num}.csv"
+            if video_num
+            else None
+        )
+        opencv = sorted(session_dir.glob("MVI_*_opencv.csv")) or sorted(
+            session_dir.glob("*_opencv.csv")
+        )
+        if manual is not None and manual.exists():
+            source, label = manual, f"manual: {manual.name}"
+        elif opencv:
+            source, label = opencv[0], f"opencv: {opencv[0].name}"
+        else:
+            return None
+
+    df = _read_tracking_csv(source)
+    if df.empty:
+        return None
+    with np.errstate(divide="ignore", invalid="ignore"):
+        theta = np.arctan(df["dy"].to_numpy() / df["dx"].to_numpy())
+    time = df["time"].to_numpy()
+    good = np.isfinite(time) & np.isfinite(theta)
+    if not good.any():
+        return None
+    return time[good], theta[good], label
+
+
 def plot_waveform(
     data: pd.DataFrame,
     output_path: Path,
@@ -259,8 +359,14 @@ def plot_analysis_waveform(
     current_voltage_column: str,
     shunt_ohms: float,
     bin_ms: float,
+    deflection: "tuple[np.ndarray, np.ndarray, str] | None" = None,
 ) -> None:
-    """Plot binned medians with a percentile band to make slow trends readable."""
+    """Binned-median voltage, current, charge, and (if tracked) deflection.
+
+    Charge is the cumulative integral of current over time. Deflection is
+    atan(dy/dx) from manual or OpenCV tip tracking. All panels share the time
+    axis with no vertical gap between them.
+    """
     if x_column not in data.columns:
         raise RuntimeError(f"CSV does not contain x-axis column: {x_column}")
     if bin_ms <= 0:
@@ -278,80 +384,77 @@ def plot_analysis_waveform(
         analysis_data["current_ma"] = (
             analysis_data[current_voltage_column] / shunt_ohms * 1000.0
         )
-    bin_width_seconds = bin_ms / 1000.0
-    x0 = float(analysis_data[x_column].min())
-    analysis_data["_bin"] = (
-        ((analysis_data[x_column] - x0) / bin_width_seconds)
-        .to_numpy(dtype=np.float64)
-        .astype(np.int64)
+    analysis_data["charge_mc"] = cumulative_charge_mc(
+        analysis_data[x_column].to_numpy(dtype=float),
+        analysis_data["current_ma"].to_numpy(dtype=float),
     )
 
-    grouped = analysis_data.groupby("_bin", sort=True)
-    summary = grouped.agg(
-        x=(x_column, "median"),
-        voltage_median=(voltage_column, "median"),
-        voltage_p05=(voltage_column, lambda values: values.quantile(0.05)),
-        voltage_p95=(voltage_column, lambda values: values.quantile(0.95)),
-        current_median=("current_ma", "median"),
-        current_p05=("current_ma", lambda values: values.quantile(0.05)),
-        current_p95=("current_ma", lambda values: values.quantile(0.95)),
-    ).reset_index(drop=True)
+    bin_width_seconds = bin_ms / 1000.0
 
-    if summary.empty:
+    def bin_summary(x_values: np.ndarray, y_values: np.ndarray) -> pd.DataFrame:
+        x_arr = np.asarray(x_values, dtype=float)
+        y_arr = np.asarray(y_values, dtype=float)
+        bins = ((x_arr - float(np.nanmin(x_arr))) / bin_width_seconds).astype(np.int64)
+        frame = pd.DataFrame({"_bin": bins, "x": x_arr, "y": y_arr})
+        return (
+            frame.groupby("_bin", sort=True)
+            .agg(
+                x=("x", "median"),
+                med=("y", "median"),
+                p05=("y", lambda v: v.quantile(0.05)),
+                p95=("y", lambda v: v.quantile(0.95)),
+            )
+            .reset_index(drop=True)
+        )
+
+    panels = [
+        (bin_summary(analysis_data[x_column], analysis_data[voltage_column]), "#1f77b4", "CH1 voltage (V)"),
+        (bin_summary(analysis_data[x_column], analysis_data["current_ma"]), "#d62728", "Current (mA)"),
+        (bin_summary(analysis_data[x_column], analysis_data["charge_mc"]), "#2ca02c", "Charge (mC)"),
+    ]
+    if panels[0][0].empty:
         raise RuntimeError("No analysis bins produced")
 
-    if x_column == "time":
-        x_label = "Time since measurement t0 (s)"
-    else:
-        x_label = "Oscilloscope time (s)"
+    if deflection is not None:
+        td, theta, _ = deflection
+        x_lo = float(analysis_data[x_column].min())
+        x_hi = float(analysis_data[x_column].max())
+        in_range = (td >= x_lo) & (td <= x_hi)
+        if in_range.any():
+            panels.append(
+                (bin_summary(td[in_range], theta[in_range]), "#9467bd", "Deflection atan(dy/dx) (rad)")
+            )
 
-    x = summary["x"].to_numpy(dtype=float)
+    x_label = "Time since measurement t0 (s)" if x_column == "time" else "Oscilloscope time (s)"
 
-    fig, (voltage_ax, current_ax) = plt.subplots(
-        nrows=2,
+    fig, axes = plt.subplots(
+        nrows=len(panels),
         ncols=1,
         sharex=True,
-        figsize=(11, 7),
-        constrained_layout=True,
+        figsize=(11, 2.3 * len(panels) + 0.6),
+        gridspec_kw={"hspace": 0.0},
     )
+    axes = np.atleast_1d(axes)
 
-    voltage_ax.fill_between(
-        x,
-        summary["voltage_p05"].to_numpy(dtype=float),
-        summary["voltage_p95"].to_numpy(dtype=float),
-        color="#1f77b4",
-        alpha=0.18,
-        linewidth=0,
-    )
-    voltage_ax.plot(
-        x,
-        summary["voltage_median"].to_numpy(dtype=float),
-        color="#1f77b4",
-        linewidth=1.3,
-    )
-    voltage_ax.set_ylabel("CH1 voltage (V)")
-    voltage_ax.grid(True, color="#d9d9d9", linewidth=0.7, alpha=0.8)
+    for ax, (summary, color, ylabel) in zip(axes, panels):
+        sx = summary["x"].to_numpy(dtype=float)
+        ax.fill_between(
+            sx,
+            summary["p05"].to_numpy(dtype=float),
+            summary["p95"].to_numpy(dtype=float),
+            color=color,
+            alpha=0.18,
+            linewidth=0,
+        )
+        ax.plot(sx, summary["med"].to_numpy(dtype=float), color=color, linewidth=1.3)
+        ax.set_ylabel(ylabel)
+        ax.grid(True, color="#d9d9d9", linewidth=0.7, alpha=0.8)
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=5, prune="both"))
 
-    current_ax.fill_between(
-        x,
-        summary["current_p05"].to_numpy(dtype=float),
-        summary["current_p95"].to_numpy(dtype=float),
-        color="#d62728",
-        alpha=0.18,
-        linewidth=0,
-    )
-    current_ax.plot(
-        x,
-        summary["current_median"].to_numpy(dtype=float),
-        color="#d62728",
-        linewidth=1.3,
-    )
-    current_ax.set_ylabel("Current (mA)")
-    current_ax.set_xlabel(x_label)
-    current_ax.grid(True, color="#d9d9d9", linewidth=0.7, alpha=0.8)
-
+    axes[-1].set_xlabel(x_label)
     fig.suptitle(f"Oscilloscope Waveform Analysis ({bin_ms:g} ms median bins)")
-    fig.savefig(output_path, format="svg")
+    fig.align_ylabels(axes)
+    fig.savefig(output_path, format="svg", bbox_inches="tight")
     plt.close(fig)
 
 
@@ -429,7 +532,10 @@ def main() -> int:
             shunt_ohms=args.shunt_ohms,
             max_points=args.max_points,
         )
+        deflection = None
         if args.analysis_output:
+            if not args.no_deflection:
+                deflection = load_deflection(args.csv_path, args.tracking_csv)
             args.analysis_output.parent.mkdir(parents=True, exist_ok=True)
             plot_analysis_waveform(
                 data=data,
@@ -439,6 +545,7 @@ def main() -> int:
                 current_voltage_column=current_voltage_column,
                 shunt_ohms=args.shunt_ohms,
                 bin_ms=args.analysis_bin_ms,
+                deflection=deflection,
             )
     except (FileNotFoundError, RuntimeError, pd.errors.ParserError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -447,6 +554,10 @@ def main() -> int:
     print(f"Wrote {output_path}")
     if args.analysis_output:
         print(f"Wrote {args.analysis_output}")
+        if deflection is not None:
+            print(f"Deflection panel from {deflection[2]}")
+        elif not args.no_deflection:
+            print("Deflection panel: no manual or OpenCV tracking found for this session")
     return 0
 
 

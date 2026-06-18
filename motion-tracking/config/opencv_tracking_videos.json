@@ -16,6 +16,7 @@
     "template_min_score": 0.25,
     "max_template_correction_px": 8.0,
     "smoothing_window_s": 0.5,
+    "jump_reject_max_px": 0.0,
     "relay_event_first_s": 50.0,
     "relay_event_period_s": 50.0,
     "relay_event_window_s": 5.0
@@ -71,7 +72,8 @@
         "template_radius_max_px": 100,
         "template_search_fraction": 0.035,
         "template_search_max_px": 50,
-        "smoothing_window_s": 0.0
+        "smoothing_window_s": 0.5,
+        "jump_reject_max_px": 8.0
       }
     },
     {
@@ -88,7 +90,8 @@
         "template_radius_max_px": 130,
         "template_search_fraction": 0.03,
         "template_search_max_px": 45,
-        "smoothing_window_s": 0.0
+        "smoothing_window_s": 0.5,
+        "jump_reject_max_px": 8.0
       }
     },
     {
@@ -105,7 +108,8 @@
         "template_radius_max_px": 130,
         "template_search_fraction": 0.03,
         "template_search_max_px": 45,
-        "smoothing_window_s": 0.0
+        "smoothing_window_s": 0.5,
+        "jump_reject_max_px": 8.0
       }
     },
     {
@@ -123,7 +127,8 @@
         "template_radius_max_px": 130,
         "template_search_fraction": 0.03,
         "template_search_max_px": 45,
-        "smoothing_window_s": 0.0
+        "smoothing_window_s": 0.5,
+        "jump_reject_max_px": 8.0
       }
     }
   ]
