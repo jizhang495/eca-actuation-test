@@ -1,0 +1,47 @@
+{
+  "test_name": "hold_constV_0p6v_500s_moku",
+  "measurement_source": "moku",
+  "dmm1_visa_id": null,
+  "dmm2_visa_id": null,
+  "oscilloscope_visa_id": null,
+  "moku_address": "default",
+  "power_supply_visa_id": "default",
+  "relay_port": "default",
+  "voltage_stages": [
+    {
+      "start_time": 0.0,
+      "end_time": 25.0,
+      "voltage": 0.0
+    },
+    {
+      "start_time": 25.0,
+      "end_time": 535.0,
+      "voltage": 0.6
+    },
+    {
+      "start_time": 535.0,
+      "end_time": 630.0,
+      "voltage": 0.0
+    }
+  ],
+  "relay_ch1_stages": [],
+  "relay_ch2_stages": [
+    {
+      "start_time": 30.0,
+      "end_time": 530.0,
+      "state": "closed"
+    }
+  ],
+  "moku_waveform_generator_stages": [],
+  "sampling_rate_hz": 10.0,
+  "moku_sample_rate_hz": 10000.0,
+  "moku_current_mode": "sr551_differential",
+  "current_shunt_ohms": 330.0,
+  "current_amplifier_gain": 10.0,
+  "moku_current_input_range": "400mVpp",
+  "dmm_acquisition_mode": "low_noise",
+  "stop_after_seconds": 630.0,
+  "record_camera": true,
+  "auto_download_camera_recording": false,
+  "camera_ready_delay_seconds": 2.0
+}

@@ -1,0 +1,67 @@
+{
+  "test_name": "dischargeR_330ohm_0p6v_moku",
+  "measurement_source": "moku",
+  "dmm1_visa_id": null,
+  "dmm2_visa_id": null,
+  "oscilloscope_visa_id": null,
+  "moku_address": "default",
+  "power_supply_visa_id": "default",
+  "relay_port": "default",
+  "voltage_stages": [
+    {
+      "start_time": 0.0,
+      "end_time": 750.0,
+      "voltage": 0.6
+    }
+  ],
+  "relay_ch1_stages": [],
+  "relay_ch2_stages": [
+    {
+      "start_time": 50.0,
+      "end_time": 100.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 150.0,
+      "end_time": 200.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 250.0,
+      "end_time": 300.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 350.0,
+      "end_time": 400.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 450.0,
+      "end_time": 500.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 550.0,
+      "end_time": 600.0,
+      "state": "closed"
+    },
+    {
+      "start_time": 650.0,
+      "end_time": 700.0,
+      "state": "closed"
+    }
+  ],
+  "moku_waveform_generator_stages": [],
+  "sampling_rate_hz": 10.0,
+  "moku_sample_rate_hz": 10000.0,
+  "moku_current_mode": "sr551_differential",
+  "current_shunt_ohms": 330.0,
+  "current_amplifier_gain": 10.0,
+  "moku_current_input_range": "400mVpp",
+  "dmm_acquisition_mode": "low_noise",
+  "stop_after_seconds": 750.0,
+  "record_camera": true,
+  "auto_download_camera_recording": false,
+  "camera_ready_delay_seconds": 2.0
+}
