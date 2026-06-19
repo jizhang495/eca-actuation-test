@@ -1,5 +1,5 @@
 {
-  "test_name": "hold_open_0p6v_600s_moku",
+  "test_name": "hold_open_neg0p4v_600s_moku",
   "measurement_source": "moku",
   "dmm1_visa_id": null,
   "dmm2_visa_id": null,
@@ -16,7 +16,7 @@
     {
       "start_time": 15.0,
       "end_time": 55.0,
-      "voltage": 0.6
+      "voltage": -0.4
     },
     {
       "start_time": 55.0,
