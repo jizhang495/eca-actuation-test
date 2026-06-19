@@ -116,6 +116,11 @@ For config-driven auto-download, both `record_camera` and
 `auto_download_camera_recording` false so runs only record the camera filename
 reference.
 
+For **bulk** offload of many recordings and the full downstream pipeline
+(metadata + session matching, MP4 transcode into sessions, motion tracking,
+charge-transfer, and the analysis plot), see
+[VIDEO_PIPELINE.md](VIDEO_PIPELINE.md).
+
 ## Port
 
 The camera service runs on port 8001 by default.

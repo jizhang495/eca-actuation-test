@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import time
+from collections import defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from download_latest_camera_recording import REPO_ROOT, probe_video_metadata
@@ -79,6 +82,87 @@ def update_metadata(video_path: Path, source_card_dir: Path) -> bool:
     return True
 
 
+def _parse_dt(value: str | None) -> "datetime | None":
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+
+
+def match_sessions_by_time(big_videos_dir: Path, sessions_dir: Path) -> int:
+    """Fill each sidecar's ``sessions`` by matching embedded creation time to sessions.
+
+    The Canon clock runs a fixed offset ahead of the session local clock. Calibrate
+    that offset as the median of (video creation - session start) over the per-session
+    camera_recording_reference.json files, then assign a session to a video when the
+    session's camera-start (start + offset) lands inside the video's recording window.
+    This is robust to a session that was stopped/restarted (whose reference can wrongly
+    name the previous file) and to the camera clock being wrong.
+    """
+    videos: dict[str, tuple[Path, datetime, float]] = {}
+    for mov in sorted(big_videos_dir.glob("*.MOV")):
+        sidecar = mov.with_suffix(mov.suffix + ".json")
+        if not sidecar.exists():
+            continue
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        created = _parse_dt(data.get("embedded_creation_time_utc"))
+        duration = data.get("video_metadata", {}).get("duration_seconds")
+        if created is not None and duration:
+            videos[mov.name] = (sidecar, created, float(duration))
+
+    sessions: dict[str, datetime] = {}
+    for session_dir in sessions_dir.glob("*"):
+        if not session_dir.is_dir():
+            continue
+        try:
+            sessions[session_dir.name] = datetime.strptime(session_dir.name[:19], "%Y-%m-%d_%H-%M-%S")
+        except ValueError:
+            continue
+
+    references: dict[str, str] = {}
+    for ref in sessions_dir.glob("*/camera_recording_reference.json"):
+        try:
+            references[ref.parent.name] = json.loads(ref.read_text(encoding="utf-8")).get("source_name")
+        except Exception:
+            continue
+
+    offsets = [
+        (videos[src][1] - sessions[name]).total_seconds()
+        for name, src in references.items()
+        if name in sessions and src in videos
+    ]
+    if not offsets:
+        return 0
+    offset = statistics.median(offsets)
+
+    matched: dict[str, list[str]] = defaultdict(list)
+    for name, start in sessions.items():
+        cam_start = start + timedelta(seconds=offset)
+        for video, (_sidecar, created, duration) in videos.items():
+            if created - timedelta(seconds=30) <= cam_start <= created + timedelta(seconds=duration + 5):
+                matched[video].append(name)
+
+    changed = 0
+    for video, (sidecar, _created, _duration) in videos.items():
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        sess = sorted(matched.get(video, []))
+        status = "matched" if sess else "unmatched"
+        if (
+            data.get("sessions") == sess
+            and data.get("match_status") == status
+            and data.get("match_method") == "time_window"
+        ):
+            continue
+        data["sessions"] = sess
+        data["match_status"] = status
+        data["match_method"] = "time_window"
+        sidecar.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        changed += 1
+    return changed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -114,7 +198,8 @@ def main() -> int:
         status = "updated" if changed else "unchanged"
         print(f"{status}: {video_path.with_suffix(video_path.suffix + '.json')}")
 
-    print(f"Processed {len(videos)} MOV files; updated {updated} sidecars.")
+    rematched = match_sessions_by_time(big_videos_dir, REPO_ROOT / "user-data" / "sessions")
+    print(f"Processed {len(videos)} MOV files; updated {updated} sidecars; session-matched {rematched} sidecars.")
     return 0
 
 
