@@ -260,8 +260,14 @@ def resolve_waveform_path(input_path: Path) -> Path:
 
 
 def load_waveform(csv_path: Path) -> pd.DataFrame:
-    data = pd.read_csv(csv_path, usecols=list(WAVEFORM_COLUMNS))
-    for column in WAVEFORM_COLUMNS:
+    # Required columns plus optional differential / pre-computed current columns.
+    # SR551 sessions export the correct differential current as ``current_mA`` and
+    # carry ``ch3_voltage``; raw-shunt/oscilloscope sessions have neither.
+    header = pd.read_csv(csv_path, nrows=0).columns
+    optional = [c for c in ("ch3_voltage", "current_mA") if c in header]
+    columns = list(WAVEFORM_COLUMNS) + optional
+    data = pd.read_csv(csv_path, usecols=columns)
+    for column in columns:
         data[column] = pd.to_numeric(data[column], errors="coerce")
     data = data.dropna(subset=list(WAVEFORM_COLUMNS)).sort_values("time")
     if data.empty:
@@ -311,8 +317,27 @@ def load_events(config_path: Path | None, manual_edge_times: list[float] | None)
     ]
 
 
-def current_ma(data: pd.DataFrame, shunt_ohms: float, amplifier_gain: float) -> np.ndarray:
-    return data["ch2_voltage"].to_numpy(dtype=float) / (shunt_ohms * amplifier_gain) * 1000.0
+def current_ma(
+    data: pd.DataFrame, shunt_ohms: float, amplifier_gain: float
+) -> tuple[np.ndarray, str]:
+    """Select the current channel and return (current_mA, source_label).
+
+    Priority:
+    1. exported ``current_mA`` column (acquisition already applied the SR551
+       differential + gain) -- the correct source for SR551 sessions;
+    2. SR551 differential ``(ch2 - ch3)/(shunt*gain)`` if ``ch3_voltage`` is
+       present but ``current_mA`` is not;
+    3. raw single-ended shunt ``ch2/(shunt*gain)`` (old Moku / oscilloscope).
+    """
+    if "current_mA" in data.columns and data["current_mA"].notna().any():
+        return data["current_mA"].to_numpy(dtype=float), "exported current_mA (SR551 differential)"
+    if "ch3_voltage" in data.columns and data["ch3_voltage"].notna().any():
+        diff = (data["ch2_voltage"].to_numpy(dtype=float) - data["ch3_voltage"].to_numpy(dtype=float))
+        return diff / (shunt_ohms * amplifier_gain) * 1000.0, f"(ch2-ch3)/({shunt_ohms:g}*{amplifier_gain:g}) [SR551 differential]"
+    return (
+        data["ch2_voltage"].to_numpy(dtype=float) / (shunt_ohms * amplifier_gain) * 1000.0,
+        f"ch2/({shunt_ohms:g}*{amplifier_gain:g}) [raw shunt]",
+    )
 
 
 def estimate_zero_baseline_mA(
@@ -1158,6 +1183,7 @@ def write_summary(
     fits: list[EdgeFit],
     args: argparse.Namespace,
     zero_baseline_mA: float,
+    current_source: str = "ch2 (raw shunt)",
 ) -> None:
     accepted = [fit for fit in fits if fit.accepted]
     rejected = [fit for fit in fits if not fit.accepted]
@@ -1182,7 +1208,7 @@ def write_summary(
         "## Method",
         "",
         "- CH2 was converted to current using "
-        f"`current_mA = ch2_voltage / ({args.shunt_ohms:g} * {args.amplifier_gain:g}) * 1000`.",
+        f"Current source: {current_source}.",
         "- A whole-run zero-current baseline of "
         f"`{zero_baseline_mA:.6g} mA` was subtracted using "
         f"`{args.zero_baseline_start:g}-{args.zero_baseline_end:g} s`."
@@ -1243,7 +1269,18 @@ def main() -> int:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         data = load_waveform(waveform_path)
-        raw_current_values = current_ma(data, args.shunt_ohms, args.amplifier_gain)
+        # Prefer the session config's sense parameters (used only for the SR551
+        # differential fallback; the exported current_mA already has them applied).
+        shunt_ohms, amplifier_gain = args.shunt_ohms, args.amplifier_gain
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text())
+                shunt_ohms = float(cfg.get("current_shunt_ohms") or shunt_ohms)
+                amplifier_gain = float(cfg.get("current_amplifier_gain") or amplifier_gain)
+            except Exception:
+                pass
+        raw_current_values, current_source = current_ma(data, shunt_ohms, amplifier_gain)
+        print(f"current source: {current_source}")
         zero_baseline_mA = estimate_zero_baseline_mA(
             data["time"].to_numpy(dtype=float),
             raw_current_values,
@@ -1280,7 +1317,7 @@ def main() -> int:
             args=args,
         )
         plot_edge_fit_overview(edge_plot_path, fits)
-        write_summary(summary_path, waveform_path, modeled, fits, args, zero_baseline_mA)
+        write_summary(summary_path, waveform_path, modeled, fits, args, zero_baseline_mA, current_source)
     except (
         FileNotFoundError,
         RuntimeError,

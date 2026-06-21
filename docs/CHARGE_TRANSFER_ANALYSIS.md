@@ -36,21 +36,31 @@ The script expects these files in the session directory:
 - `moku_waveform.csv` or `oscilloscope_waveform.csv`
 - `config.json`
 
-The waveform CSV must contain:
-
-- `time`
-- `ch1_voltage`
-- `ch2_voltage`
+The waveform CSV must contain `time`, `ch1_voltage`, `ch2_voltage`, and
+optionally `ch3_voltage` and a pre-computed `current_mA` column.
 
 The config file is used to recover relay edge times from `relay_ch*_stages`. Closed relay stage starts are treated as `close` edges; closed relay stage ends are treated as `open` edges.
 
-Current is calculated from the CH2 shunt voltage:
+**Current-channel selection (fixed 2026-06-21).** The analyzer picks the current
+source in this priority order:
 
-```text
-current_mA = ch2_voltage / (shunt_ohms * amplifier_gain) * 1000
-```
+1. **Exported `current_mA`** column, if present and finite — the acquisition has
+   already applied the SR551 differential and gain. This is the correct source for
+   SR551 sessions and is preferred.
+2. **SR551 differential** `(ch2_voltage − ch3_voltage) / (shunt_ohms * amplifier_gain) * 1000`,
+   if `ch3_voltage` is present but `current_mA` is not.
+3. **Raw single-ended shunt** `ch2_voltage / (shunt_ohms * amplifier_gain) * 1000`
+   (old Moku raw-shunt and oscilloscope sessions, which have no CH3).
 
-The default shunt is `330 ohm`, and the default amplifier gain is `1`.
+`shunt_ohms` and `amplifier_gain` are read from the session config
+(`current_shunt_ohms`, `current_amplifier_gain`) when present, else from the CLI
+defaults (`330 Ω`, gain `1`). The chosen source is printed and recorded in the
+summary.
+
+> ⚠️ **History:** before this fix the analyzer used CH2 alone at gain 1 for *all*
+> sessions. For SR551 differential sessions that ignored CH3 and the ×10 gain,
+> **inflating charge magnitudes ~5×**. All SR551 charge-transfer outputs were
+> regenerated after the fix; raw-shunt/oscilloscope outputs were unaffected.
 
 ## Baseline Handling
 
