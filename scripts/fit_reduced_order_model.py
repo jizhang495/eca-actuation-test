@@ -147,13 +147,23 @@ def main() -> int:
     F = fresh_device()
 
     # C_v from Q-V slope (series areal cap of two asymmetric electrodes; encap is
-    # passive -> does not affect the electrical capacitance)
+    # passive -> does not affect the electrical capacitance). Fit is forced through
+    # the ORIGIN: Q(0)=0 physically (no voltage -> no stored charge), so the slope
+    # is the proportional (secant) cell capacitance. A free fit gives a spurious
+    # negative intercept because Q(V) is mildly superlinear (voltage-dependent C).
     cA_per_cv = H_TOP * H_BOT / (H_TOP + H_BOT)
-    slope_QV = np.polyfit(F["V"], F["Q_uC"] * 1e-6, 1)[0]   # C/V = C_cell
+    Vq = F["V"].to_numpy(float); Qq = F["Q_uC"].to_numpy(float) * 1e-6
+    slope_QV = float(np.sum(Vq * Qq) / np.sum(Vq * Vq))    # C/V = C_cell, through origin
+    slope_QV_free = float(np.polyfit(Vq, Qq, 1)[0])        # free fit, for reference
     Cv = slope_QV / (cA_per_cv * AREA)                      # F/m^3
 
-    # alpha from theta-Q slope (theta = kappa*L/2 convention)
-    slope_thQ = np.polyfit(F["Q_uC"] * 1e-6, F["sw_mrad"] / 1000, 1)[0]  # rad/C
+    # alpha from theta-Q slope (theta = kappa*L/2 convention). Forced through the
+    # ORIGIN: theta(0)=0 physically (no charge -> no swelling -> no bend), same as
+    # the Q-V fit. A free fit leaves a +9 mrad intercept and, drawn through origin,
+    # would sit below every point.
+    Qc = F["Q_uC"].to_numpy(float) * 1e-6
+    thr = F["sw_mrad"].to_numpy(float) / 1000.0
+    slope_thQ = float(np.sum(Qc * thr) / np.sum(Qc * Qc))  # rad/C, through origin
     alpha5 = abs(slope_thQ / (G5 * L / 2.0 / AREA))   # encapsulation-corrected (true)
     alpha3 = abs(slope_thQ / (G3 * L / 2.0 / AREA))   # 3-layer apparent (paper convention)
     alpha = alpha5
@@ -175,7 +185,8 @@ def main() -> int:
 
     print("=== reduced-order model fit (fresh device 2026-05-06) ===")
     print(F.to_string(index=False))
-    print(f"\nC_v   = {Cv/1e6:6.1f} F/cm^3   (lit 38)        from Q-V slope {slope_QV*1e6:.2f} uC/V")
+    print(f"\nC_v   = {Cv/1e6:6.1f} F/cm^3   (lit 38)  from through-origin Q-V slope {slope_QV*1e6:.2f} uC/V "
+          f"(free-fit slope {slope_QV_free*1e6:.2f} -> {slope_QV_free/(cA_per_cv*AREA)/1e6:.0f} F/cm3, unphysical -ve intercept)")
     print(f"alpha (5-layer, encap-corrected) = {alpha5:.3e} m^3/C")
     print(f"alpha (3-layer, paper convention) = {alpha3:.3e} m^3/C   (lit 0.44-0.69e-10)")
     print(f"encapsulation stiffening: bending -{encap_penalty*100:.0f}% per unit strain (|G3|/|G5|={abs(G3)/abs(G5):.2f})")
@@ -197,8 +208,8 @@ def main() -> int:
     fig, ax = plt.subplots(figsize=(6.5, 4.6))
     ax.plot(F["V"], F["Q_uC"], "o", ms=8, color="#1f77b4", label="fresh device (2026-05-06)")
     vv = np.linspace(0, 0.85, 50)
-    ax.plot(vv, slope_QV * 1e6 * vv + np.polyfit(F["V"], F["Q_uC"], 1)[1], "--", color="#888",
-            label=f"C_v = {Cv/1e6:.0f} F/cm³ (lit 38)")
+    ax.plot(vv, slope_QV * 1e6 * vv, "--", color="#888",
+            label=f"through-origin fit: C_v = {Cv/1e6:.0f} F/cm³ (lit 38)")
     ax.set_xlabel("Applied voltage (V)"); ax.set_ylabel("Transported charge (µC)")
     ax.set_title("Charge–voltage: volumetric capacitance"); ax.grid(alpha=0.3); ax.legend()
     fig.tight_layout()
