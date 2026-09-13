@@ -4,13 +4,14 @@
 Reproducible extraction of the *within-session / within-day* electromechanical
 characterization, plus a compact view of the cross-day drift that is treated as
 a confound (not the headline). Reads the session CSVs directly and writes
-figures + a tidy data CSV into ``user-data/reports/``.
+figures into ``user-data/reports/figures/`` and a tidy data CSV into
+``user-data/reports/``.
 
 Outputs (user-data/reports/):
-  fig_dc_transfer.{png,svg}    deflection swing & charge vs signed step voltage
-  fig_frequency_response.*     deflection (low-pass) & current (capacitive) vs f
-  fig_ac_linearity.*           deflection & current vs AC drive amplitude
-  fig_drift_confound.*         step response time (t63) & stroke vs date
+  figures/fig_dc_transfer.{png,svg}    deflection swing & charge vs signed step voltage
+  figures/fig_frequency_response.*     deflection (low-pass) & current (capacitive) vs f
+  figures/fig_ac_linearity.*           deflection & current vs AC drive amplitude
+  figures/fig_drift_confound.*         step response time (t63) & stroke vs date
   characterization_data.csv    the aggregated numbers behind the figures
 """
 
@@ -32,6 +33,7 @@ import matplotlib.pyplot as plt
 REPO = Path(__file__).resolve().parents[1]
 SESS = REPO / "user-data" / "sessions"
 OUT = REPO / "user-data" / "reports"
+FIGURES = OUT / "figures"
 
 
 # ---------- helpers ----------
@@ -218,7 +220,7 @@ def fig_dc(R: pd.DataFrame) -> None:
                     textcoords="offset points", xytext=(4, 5), fontsize=8)
     fig.tight_layout()
     for ext in ("png", "svg"):
-        fig.savefig(OUT / f"fig_dc_transfer.{ext}", dpi=110, bbox_inches="tight")
+        fig.savefig(FIGURES / f"fig_dc_transfer.{ext}", dpi=110, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -243,7 +245,7 @@ def fig_freq(sine: pd.DataFrame, square: pd.DataFrame) -> None:
     ax2.legend(loc="center right")
     fig.tight_layout()
     for ext in ("png", "svg"):
-        fig.savefig(OUT / f"fig_frequency_response.{ext}", dpi=110, bbox_inches="tight")
+        fig.savefig(FIGURES / f"fig_frequency_response.{ext}", dpi=110, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -264,7 +266,7 @@ def fig_ac(amp: pd.DataFrame) -> None:
     ax.legend()
     fig.tight_layout()
     for ext in ("png", "svg"):
-        fig.savefig(OUT / f"fig_ac_linearity.{ext}", dpi=110, bbox_inches="tight")
+        fig.savefig(FIGURES / f"fig_ac_linearity.{ext}", dpi=110, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -301,12 +303,12 @@ def fig_drift(mid: pd.DataFrame, rest: pd.DataFrame) -> None:
     axb.set_xticklabels(order, rotation=30, ha="right", fontsize=8)
     fig.tight_layout()
     for ext in ("png", "svg"):
-        fig.savefig(OUT / f"fig_drift_confound.{ext}", dpi=110, bbox_inches="tight")
+        fig.savefig(FIGURES / f"fig_drift_confound.{ext}", dpi=110, bbox_inches="tight")
     plt.close(fig)
 
 
 def main() -> int:
-    OUT.mkdir(parents=True, exist_ok=True)
+    FIGURES.mkdir(parents=True, exist_ok=True)
     dc = dc_transfer()
     sine = sweep(str(SESS / "2026-06-09_16-16-55_moku_freqsweep_sine_0p5v"))
     square = sweep(str(SESS / "2026-06-09_17-26-10_moku_freqsweep_square_0p5v"))
@@ -334,7 +336,7 @@ def main() -> int:
     print("DC transfer:\n", dc.to_string(index=False))
     print("\nDrift mid-train:\n", dr_mid.to_string(index=False))
     print("Drift from-rest:\n", dr_rest.to_string(index=False))
-    print(f"\nWrote figures + characterization_data.csv to {OUT.relative_to(REPO)}")
+    print(f"\nWrote figures to {FIGURES.relative_to(REPO)}; characterization_data.csv to {OUT.relative_to(REPO)}")
     return 0
 
 

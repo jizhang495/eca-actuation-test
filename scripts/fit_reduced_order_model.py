@@ -13,9 +13,9 @@ Anchors on the FRESH device (2026-05-06, runs 6998/6999: DMM current via the
 DMSO findings) so the fitted parameters are pre-degradation.
 
 Outputs to user-data/reports/:
-  fig_model_charge_voltage.*     Q(V) with the C_v fit
-  fig_model_strain_charge.*      theta(Q) with the alpha fit
-  fig_model_frequency_fit.*      deflection roll-off with the first-order fit
+  figures/fig_model_charge_voltage.*     Q(V) with the C_v fit
+  figures/fig_model_strain_charge.*      theta(Q) with the alpha fit
+  figures/fig_model_frequency_fit.*      deflection roll-off with the first-order fit
   reduced_order_fit_params.csv   fitted vs literature parameters
 """
 
@@ -36,6 +36,7 @@ import matplotlib.pyplot as plt
 REPO = Path(__file__).resolve().parents[1]
 SESS = REPO / "user-data" / "sessions"
 OUT = REPO / "user-data" / "reports"
+FIGURES = OUT / "figures"
 MANUAL = REPO / "motion-tracking" / "user-data" / "data"
 sys.path.insert(
     0, str(REPO / "user-data" / "eca-digital-twin" / "simulations" / "reduced-order" / "src")
@@ -141,7 +142,7 @@ def freq_response() -> pd.DataFrame:
 
 
 def main() -> int:
-    OUT.mkdir(parents=True, exist_ok=True)
+    FIGURES.mkdir(parents=True, exist_ok=True)
     G5 = beam_factor(with_encap=True)    # true 5-layer device
     G3 = beam_factor(with_encap=False)   # paper's 3-layer convention
     F = fresh_device()
@@ -213,7 +214,7 @@ def main() -> int:
     ax.set_xlabel("Applied voltage (V)"); ax.set_ylabel("Transported charge (µC)")
     ax.set_title("Charge–voltage: volumetric capacitance"); ax.grid(alpha=0.3); ax.legend()
     fig.tight_layout()
-    for e in ("png", "svg"): fig.savefig(OUT / f"fig_model_charge_voltage.{e}", dpi=110)
+    for e in ("png", "svg"): fig.savefig(FIGURES / f"fig_model_charge_voltage.{e}", dpi=110)
     plt.close(fig)
 
     # theta-Q
@@ -225,7 +226,7 @@ def main() -> int:
     ax.set_xlabel("Transported charge (µC)"); ax.set_ylabel("Deflection swing (mrad)")
     ax.set_title("Strain–charge coupling (beam-model inversion)"); ax.grid(alpha=0.3); ax.legend()
     fig.tight_layout()
-    for e in ("png", "svg"): fig.savefig(OUT / f"fig_model_strain_charge.{e}", dpi=110)
+    for e in ("png", "svg"): fig.savefig(FIGURES / f"fig_model_strain_charge.{e}", dpi=110)
     plt.close(fig)
 
     # frequency fit
@@ -238,7 +239,7 @@ def main() -> int:
     ax.set_xscale("log"); ax.set_xlabel("Frequency (Hz)"); ax.set_ylabel("Deflection amplitude (mrad)")
     ax.set_title("Mechanical frequency response vs first-order model"); ax.grid(alpha=0.3, which="both"); ax.legend()
     fig.tight_layout()
-    for e in ("png", "svg"): fig.savefig(OUT / f"fig_model_frequency_fit.{e}", dpi=110)
+    for e in ("png", "svg"): fig.savefig(FIGURES / f"fig_model_frequency_fit.{e}", dpi=110)
     plt.close(fig)
 
     pd.DataFrame([
@@ -253,7 +254,7 @@ def main() -> int:
         dict(parameter="polarity ratio (model, with encap)", fitted=round(pol, 4), literature="1.0 (symmetric)"),
         dict(parameter="polarity ratio (measured)", fitted="~1.2", literature="—"),
     ]).to_csv(OUT / "reduced_order_fit_params.csv", index=False)
-    print(f"\nWrote figures + reduced_order_fit_params.csv to {OUT.relative_to(REPO)}")
+    print(f"\nWrote figures to {FIGURES.relative_to(REPO)}; reduced_order_fit_params.csv to {OUT.relative_to(REPO)}")
     return 0
 
 
