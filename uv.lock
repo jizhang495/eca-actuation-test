@@ -307,7 +307,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "ipython", specifier = ">=8.10.0" },
     { name = "matplotlib", specifier = ">=3.7.0" },
-    { name = "moku", specifier = ">=4.2.2.1" },
+    { name = "moku", specifier = ">=4.3.0.1" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "openai", specifier = ">=1.54.4" },
     { name = "opencv-python", specifier = ">=4.13.0.92" },
@@ -784,16 +784,16 @@ wheels = [
 
 [[package]]
 name = "moku"
-version = "4.2.2.1"
+version = "4.3.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "packaging" },
     { name = "requests" },
     { name = "zeroconf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/a4/8f8c885fb400583f5b31f21b2079b8df33d0ff8847d3f7f15235666b7976/moku-4.2.2.1.tar.gz", hash = "sha256:0c53780159651120d117522ee45fd571bc8d8bbd2213f0ecec5216cacd4cc526", size = 334814, upload-time = "2026-05-12T01:39:34.131Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/8d/89d217f5f0a7c2d245d4e7279391f73e5b2c9e1da94cb46e48b376477f4c/moku-4.3.0.1.tar.gz", hash = "sha256:5da8a6a79755592a4da7133500214fb9fc1ae934ca9701b9f4f823fb37b78778", size = 365624, upload-time = "2026-07-14T06:26:43.882Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/62/3e6bb1ae8b2009953a9e82c5fb411f7ee8e6b2c461df684c9c9cf73b584b/moku-4.2.2.1-py3-none-any.whl", hash = "sha256:ea0b439e9a0315c3bea098cc7ce60c440d73b4891e300efdf66a6d37119bde62", size = 93261, upload-time = "2026-05-12T01:39:31.779Z" },
+    { url = "https://files.pythonhosted.org/packages/83/22/b906459f046cb22d93e6770be8d2a81802199707e236dac12350da196c26/moku-4.3.0.1-py3-none-any.whl", hash = "sha256:0df9df73e0f9a088b51fb86ba5db59de718fb08638725cc73a3610981c3335ec", size = 93870, upload-time = "2026-07-14T06:26:45.35Z" },
 ]
 
 [[package]]
