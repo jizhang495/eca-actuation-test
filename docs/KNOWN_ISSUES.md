@@ -31,6 +31,32 @@ This is a live audit list for behavior/documentation mismatches and code risks f
 7. **Moku export lifecycle previously allowed overlapping sessions.**
    During the 2026-05-22 rate sweep, the HTTP runner started the next preset as soon as `is_measuring` became false, while Moku export/cleanup from the previous run was still active. That contaminated the next session folder with the previous Moku file. The controller now keeps API status busy during stop/export cleanup and rejects new starts while stopping. Keep this behavior covered if lifecycle tests are added.
 
+8. **Median current baseline can bias very small integrated charge.**
+   In the 2026-09-10 17:42 two-pass aged-actuator readiness run, SR551 current
+   quantization was about 0.162 µA/count. The resting sample median was
+   0.16202 µA, but the 1–9 s mean was 0.09554 µA. Subtracting that median for
+   a 10 s integral introduces about −0.665 µC relative to the mean baseline,
+   larger than the ~0.24 µC charging integral. The 0–20 s default baseline
+   also overlaps the pulse in this custom test. No production analyzer change
+   was made: the session-local readiness script uses explicit mean rest
+   baselines, measured voltage edges and reports pre/post baseline sensitivity.
+   Inspect the distribution before using the median-baseline analyzer or
+   median-binned small-current plots for long-integral claims. See
+   [readiness analysis](../user-data/sessions/2026-09-10_17-42-10_aged_2pass_readiness_0p2v_60s_10ksps_20260910/readiness_report.md).
+
+9. **A monitoring timeout during large export does not establish acquisition failure.**
+   In the 2026-09-11 290 s CA pilot, the backend retried a waveform-download
+   connection error successfully. A temporary monitoring script's 10 s API
+   status timeout occurred during export after all pulses had completed; its
+   idempotent stop request found cleanup already active. The backend continued,
+   exported 2,899,500 finite samples and finished shutdown. The cause of the
+   slow status response was not isolated. Recheck status and exported artifacts
+   after a transient monitoring failure, and wait for both `is_measuring` and
+   `is_stopping` to clear before starting anything else. Do not kill a backend
+   that is still exporting or label the measurement failed from the runner's
+   exit code alone. See the
+   [pilot report](../user-data/sessions/2026-09-11_14-24-10_aged_2pass_ca_pm0p2v_30s_60srest_290s_20260910/ca_pilot_report.md).
+
 ## Lower Priority
 
 - `stop.sh`/`stop.ps1` stop broad Python/Node process patterns. That is convenient on a dedicated lab PC but risky on a shared development machine.
